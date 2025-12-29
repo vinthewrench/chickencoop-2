@@ -1,0 +1,129 @@
+/*
+ * mini_printf.cpp
+ *
+ * Project: Chicken Coop Controller
+ * Purpose: Source file
+ *
+ * Notes:
+ *  - Offline system
+ *  - Deterministic behavior
+ *  - No network dependencies
+ *
+ * Updated: 2025-12-29
+ */
+
+#include <stdarg.h>
+#include <stdbool.h>
+#include "console_io.h"
+
+/* print unsigned int with optional zero padding */
+static void put_uint_pad(unsigned int v, unsigned int width, char pad)
+{
+    char buf[10];
+    unsigned int i = 0;
+
+    if (v == 0) {
+        buf[i++] = '0';
+    } else {
+        while (v > 0) {
+            buf[i++] = (char)('0' + (v % 10));
+            v /= 10;
+        }
+    }
+
+    while (i < width)
+        buf[i++] = pad;
+
+    while (i--)
+        console_putc(buf[i]);
+}
+
+static void put_int_pad(int v, unsigned int width, char pad)
+{
+    if (v < 0) {
+        console_putc('-');
+        put_uint_pad((unsigned int)(-v), width ? width - 1 : 0, pad);
+    } else {
+        put_uint_pad((unsigned int)v, width, pad);
+    }
+}
+
+static void put_latlon(double v)
+{
+    if (v < 0) {
+        console_putc('-');
+        v = -v;
+    } else {
+        console_putc('+');
+    }
+
+    int whole = (int)v;
+    int frac  = (int)((v - whole) * 10000.0 + 0.5);
+
+    put_uint_pad((unsigned)whole, 0, ' ');
+    console_putc('.');
+    put_uint_pad((unsigned)frac, 4, '0');
+}
+
+void mini_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+
+    while (*fmt) {
+        if (*fmt != '%') {
+            console_putc(*fmt++);
+            continue;
+        }
+
+        fmt++; /* skip '%' */
+
+        /* parse zero pad */
+        char pad = ' ';
+        if (*fmt == '0') {
+            pad = '0';
+            fmt++;
+        }
+
+        /* parse width */
+        unsigned int width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (unsigned int)(*fmt - '0');
+            fmt++;
+        }
+
+        switch (*fmt) {
+        case 's':
+            console_puts(va_arg(ap, const char *));
+            break;
+
+        case 'c':
+            console_putc((char)va_arg(ap, int));
+            break;
+
+        case 'u':
+            put_uint_pad(va_arg(ap, unsigned int), width, pad);
+            break;
+
+        case 'd':
+            put_int_pad(va_arg(ap, int), width, pad);
+            break;
+
+        case 'L':
+            put_latlon(va_arg(ap, double));
+            break;
+
+        case '%':
+            console_putc('%');
+            break;
+
+        default:
+            console_putc('?');
+            break;
+        }
+
+        fmt++;
+    }
+
+    va_end(ap);
+}
