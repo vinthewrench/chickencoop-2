@@ -31,7 +31,7 @@
  *  - Offline operation
  *  - AVR SRAM is a hard limit, not a suggestion
  *
- * Updated: 2025-12-30
+ * Updated: 2025-12-31
  */
 
 
@@ -292,6 +292,31 @@ static bool parse_signed_int(const char *s, int *out)
 
     *out = (int)v;
     return true;
+}
+
+static bool compute_today_solar(struct solar_times *out)
+{
+    if (!out)
+        return false;
+
+    double lat = (double)g_cfg.latitude_e4 / 10000.0;
+    double lon = (double)g_cfg.longitude_e4 / 10000.0;
+
+    int tz = g_cfg.tz;
+    if (g_cfg.honor_dst &&
+        is_us_dst(g_date_y, g_date_mo, g_date_d, g_time_h)) {
+        tz += 1;
+    }
+
+    return solar_compute(
+        g_date_y,
+        g_date_mo,
+        g_date_d,
+        lat,
+        lon,
+        (int8_t)tz,
+        out
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -820,105 +845,87 @@ static void cmd_event(int argc, char **argv)
     /* --------------------------------------------------------------------
      * event list
      * ------------------------------------------------------------------ */
-    if (!strcmp(argv[1], "list") && argc == 2) {
+     if (!strcmp(argv[1], "list") && argc == 2) {
 
-        size_t count = 0;
-        const Event *events = config_events_get(&count);
+         size_t count = 0;
+         const Event *events = config_events_get(&count);
 
-        if (count == 0) {
-            console_puts("(no events)\n");
-            return;
-        }
+         if (count == 0) {
+             console_puts("(no events)\n");
+             return;
+         }
 
-        /* Compute solar times once for today */
-        struct solar_times sol;
+         /* Compute solar times once for today */
+         struct solar_times sol;
+         bool have_sol = compute_today_solar(&sol);
 
-        double lat = (double)g_cfg.latitude_e4  / 10000.0;
-        double lon = (double)g_cfg.longitude_e4 / 10000.0;
+         /* Resolve + collect (index is the stable ID) */
+         struct Resolved {
+             uint16_t minute;
+             uint8_t  index;
+         };
 
-        int tz = g_cfg.tz;
-        if (g_cfg.honor_dst &&
-            is_us_dst(g_date_y, g_date_mo, g_date_d, g_time_h)) {
-            tz += 1;
-        }
+         struct Resolved r[MAX_EVENTS];
+         size_t rcount = 0;
 
-        bool have_sol = solar_compute(
-            g_date_y,
-            g_date_mo,
-            g_date_d,
-            lat,
-            lon,
-            (int8_t)tz,
-            &sol
-        );
+         for (size_t i = 0; i < count; i++) {
+             uint16_t minute;
+             if (!resolve_when(&events[i].when,
+                               have_sol ? &sol : NULL,
+                               &minute))
+                 continue;
 
-        /* Resolve + collect (index is the ID) */
-        struct Resolved {
-            uint16_t minute;
-            uint8_t  index;
-        };
+             r[rcount].minute = minute;
+             r[rcount].index  = (uint8_t)i;
+             rcount++;
+         }
 
-        struct Resolved r[MAX_EVENTS];
-        size_t rcount = 0;
+         if (rcount == 0) {
+             console_puts("(no events)\n");
+             return;
+         }
 
-        for (size_t i = 0; i < count; i++) {
-            uint16_t minute;
-            if (!resolve_when(&events[i].when,
-                              have_sol ? &sol : NULL,
-                              &minute))
-                continue;
+         /* Sort by resolved time, then index */
+         for (size_t i = 0; i + 1 < rcount; i++) {
+             for (size_t j = i + 1; j < rcount; j++) {
+                 if (r[j].minute < r[i].minute ||
+                    (r[j].minute == r[i].minute &&
+                     r[j].index < r[i].index)) {
 
-            r[rcount].minute = minute;
-            r[rcount].index  = (uint8_t)i;
-            rcount++;
-        }
+                     struct Resolved tmp = r[i];
+                     r[i] = r[j];
+                     r[j] = tmp;
+                 }
+             }
+         }
 
-        if (rcount == 0) {
-            console_puts("(no events)\n");
-            return;
-        }
+         /* Print */
+         for (size_t i = 0; i < rcount; i++) {
+             const Event *ev = &events[r[i].index];
+             uint16_t minute = r[i].minute;
 
-        /* Sort by minute, then index */
-        for (size_t i = 0; i + 1 < rcount; i++) {
-            for (size_t j = i + 1; j < rcount; j++) {
-                if (r[j].minute < r[i].minute ||
-                   (r[j].minute == r[i].minute &&
-                    r[j].index < r[i].index)) {
+             const char *dev = "?";
+             if (ev->device_id < device_count) {
+                 const Device *d = devices[ev->device_id];
+                 if (d && d->name)
+                     dev = d->name;
+             }
 
-                    struct Resolved tmp = r[i];
-                    r[i] = r[j];
-                    r[j] = tmp;
-                }
-            }
-        }
+             /* Time first, index secondary */
+             mini_printf("%02u:%02u #%u ",
+                         (unsigned)(minute / 60),
+                         (unsigned)(minute % 60),
+                         (unsigned)r[i].index);
 
-        /* Print */
-        for (size_t i = 0; i < rcount; i++) {
-            const Event *ev = &events[r[i].index];
-            uint16_t minute = r[i].minute;
-
-            const char *dev = "?";
-            if (ev->device_id < device_count) {
-                const Device *d = devices[ev->device_id];
-                if (d && d->name)
-                    dev = d->name;
-            }
-
-            mini_printf("%02u:%02u #%u ",
-                        (unsigned)(minute / 60),
-                        (unsigned)(minute % 60),
-                        (unsigned)r[i].index);
-
-            console_puts(dev);
-            console_putc(' ');
-            console_puts(action_name(ev->action));
-            console_putc(' ');
-            when_print(&ev->when);
-            console_putc('\n');
-        }
-        return;
-    }
-
+             console_puts(dev);
+             console_putc(' ');
+             console_puts(action_name(ev->action));
+             console_putc(' ');
+             when_print(&ev->when);
+             console_putc('\n');
+         }
+         return;
+     }
     /* --------------------------------------------------------------------
      * event clear
      * ------------------------------------------------------------------ */
@@ -1050,9 +1057,7 @@ static void cmd_event(int argc, char **argv)
         console_puts("ERROR\n");
         return;
 
-add_event:
-        /* No refnums: keep zero */
-        ev.refnum = 0;
+add_event:ev.refnum = 0;
 
         if (!config_events_add(&ev)) {
             console_puts("ERROR\n");
@@ -1076,11 +1081,11 @@ static void cmd_next(int argc, char **argv)
 
     uint16_t now = rtc_minutes_since_midnight();
 
-    /* Compute solar times once */
+    /* Compute today's solar times */
     struct solar_times sol;
     bool have_sol = false;
 
-    double lat = (double)g_cfg.latitude_e4 / 10000.0;
+    double lat = (double)g_cfg.latitude_e4  / 10000.0;
     double lon = (double)g_cfg.longitude_e4 / 10000.0;
 
     int tz = g_cfg.tz;
@@ -1102,9 +1107,14 @@ static void cmd_next(int argc, char **argv)
     size_t count = 0;
     const Event *events = config_events_get(&count);
 
-    size_t idx;
-    uint16_t minute;
-    bool tomorrow;
+    if (count == 0) {
+        console_puts("next: none\n");
+        return;
+    }
+
+    size_t idx = 0;
+    uint16_t minute = 0;
+    bool tomorrow = false;
 
     if (!next_event_today(events,
                           count,
@@ -1117,14 +1127,18 @@ static void cmd_next(int argc, char **argv)
         return;
     }
 
+    int32_t delta_min;
     if (tomorrow)
-        console_puts("next: tomorrow ");
+        delta_min = (1440 - now) + minute;
     else
-        console_puts("next: ");
+        delta_min = (int32_t)minute - (int32_t)now;
 
-    mini_printf("%02u:%02u ",
-                minute / 60,
-                minute % 60);
+    console_puts(tomorrow ? "next: tomorrow " : "next: ");
+
+    mini_printf("%02u:%02u (+%d min) ",
+                (unsigned)(minute / 60),
+                (unsigned)(minute % 60),
+                (int)delta_min);
 
     const Event *ev = &events[idx];
 
@@ -1274,6 +1288,7 @@ typedef struct {
         "event add <device> <on|off> solar sunset  +/-MIN\n" \
         "event add <device> <on|off> civil dawn    +/-MIN\n" \
         "event add <device> <on|off> civil dusk    +/-MIN\n" \
+        "event delete <index>" \
       )
 
  /* Commands that only exist when their handlers exist */

@@ -144,9 +144,16 @@ set-fuses:
 		-U efuse:w:0xF5:m
 
 # ------------------------------------------------------------
+# Size
+# ------------------------------------------------------------
+size: $(PROJECT).elf
+	@echo "---- AVR Memory Usage ----"
+	@$(SIZE) -C --mcu=$(MCU) "$<"
+
+# ------------------------------------------------------------
 # Cleanup
 # ------------------------------------------------------------
 clean:
 	rm -rf $(OBJ_DIR) *.elf *.hex *.lst *.map
 
-.PHONY: all clean flash check-fuses set-fuses
+.PHONY: all clean flash check-fuses set-fuses size

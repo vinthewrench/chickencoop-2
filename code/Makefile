@@ -15,3 +15,8 @@ firmware:
 clean:
 	$(MAKE) -C host clean
 	$(MAKE) -C firmware clean
+
+.PHONY: size
+
+size:
+	$(MAKE) -C firmware size
