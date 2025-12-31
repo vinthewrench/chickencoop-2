@@ -43,6 +43,8 @@
 
 #include "events.h"
 #include "config_events.h"
+#include "resolve_when.h"
+
 #include "solar.h"
 #include "rtc.h"
 #include "config.h"
@@ -290,7 +292,6 @@ static bool parse_signed_int(const char *s, int *out)
     *out = (int)v;
     return true;
 }
-
 
 // -----------------------------------------------------------------------------
 // Enum-to-string helpers
@@ -809,9 +810,10 @@ static void cmd_event(int argc, char **argv)
 {
     ensure_cfg_loaded();
 
-    if (argc < 2) {
-        console_puts("?\n");
-        return;
+    /* Default: `event` == `event list` */
+    if (argc == 1) {
+        argv[1] = (char *)"list";
+        argc = 2;
     }
 
     /* --------------------------------------------------------------------
@@ -827,8 +829,72 @@ static void cmd_event(int argc, char **argv)
             return;
         }
 
+        /* Compute solar times once for today */
+        struct solar_times sol;
+
+        double lat = (double)g_cfg.latitude_e4  / 10000.0;
+        double lon = (double)g_cfg.longitude_e4 / 10000.0;
+
+        int tz = g_cfg.tz;
+        if (g_cfg.honor_dst &&
+            is_us_dst(g_date_y, g_date_mo, g_date_d, g_time_h)) {
+            tz += 1;
+        }
+
+        bool have_sol = solar_compute(
+            g_date_y,
+            g_date_mo,
+            g_date_d,
+            lat,
+            lon,
+            (int8_t)tz,
+            &sol
+        );
+
+        /* Resolve + collect (index is the ID) */
+        struct Resolved {
+            uint16_t minute;
+            uint8_t  index;
+        };
+
+        struct Resolved r[MAX_EVENTS];
+        size_t rcount = 0;
+
         for (size_t i = 0; i < count; i++) {
-            const Event *ev = &events[i];
+            uint16_t minute;
+            if (!resolve_when(&events[i].when,
+                              have_sol ? &sol : NULL,
+                              &minute))
+                continue;
+
+            r[rcount].minute = minute;
+            r[rcount].index  = (uint8_t)i;
+            rcount++;
+        }
+
+        if (rcount == 0) {
+            console_puts("(no events)\n");
+            return;
+        }
+
+        /* Sort by minute, then index */
+        for (size_t i = 0; i + 1 < rcount; i++) {
+            for (size_t j = i + 1; j < rcount; j++) {
+                if (r[j].minute < r[i].minute ||
+                   (r[j].minute == r[i].minute &&
+                    r[j].index < r[i].index)) {
+
+                    struct Resolved tmp = r[i];
+                    r[i] = r[j];
+                    r[j] = tmp;
+                }
+            }
+        }
+
+        /* Print */
+        for (size_t i = 0; i < rcount; i++) {
+            const Event *ev = &events[r[i].index];
+            uint16_t minute = r[i].minute;
 
             const char *dev = "?";
             if (ev->device_id < device_count) {
@@ -837,11 +903,15 @@ static void cmd_event(int argc, char **argv)
                     dev = d->name;
             }
 
-            mini_printf("[%u] %s %s ",
-                        (unsigned)i,
-                        dev,
-                        action_name(ev->action));
+            mini_printf("%02u:%02u #%u ",
+                        (unsigned)(minute / 60),
+                        (unsigned)(minute % 60),
+                        (unsigned)r[i].index);
 
+            console_puts(dev);
+            console_putc(' ');
+            console_puts(action_name(ev->action));
+            console_putc(' ');
             when_print(&ev->when);
             console_putc('\n');
         }
@@ -866,7 +936,7 @@ static void cmd_event(int argc, char **argv)
         char *end = NULL;
         long idx = strtol(argv[2], &end, 10);
 
-        if (!end || *end != '\0' || idx < 0 || idx >= MAX_EVENTS) {
+        if (!end || *end != '\0' || idx < 0 || idx >= (long)MAX_EVENTS) {
             console_puts("ERROR\n");
             return;
         }
@@ -894,13 +964,11 @@ static void cmd_event(int argc, char **argv)
             return;
         }
 
-        /* device */
         if (!devices_lookup_id(argv[2], &ev.device_id)) {
             console_puts("ERROR\n");
             return;
         }
 
-        /* action */
         if (!strcmp(argv[3], "on"))
             ev.action = ACTION_ON;
         else if (!strcmp(argv[3], "off"))
@@ -910,10 +978,7 @@ static void cmd_event(int argc, char **argv)
             return;
         }
 
-        /* ------------------------------------------------------------
-         * implicit midnight: HH:MM
-         * event add door on 07:30
-         * ---------------------------------------------------------- */
+        /* implicit midnight: HH:MM */
         if (argc == 5) {
             int hh, mm;
             if (!parse_time_hm(argv[4], &hh, &mm)) {
@@ -925,10 +990,7 @@ static void cmd_event(int argc, char **argv)
             goto add_event;
         }
 
-        /* ------------------------------------------------------------
-         * explicit midnight
-         * event add door on midnight HH:MM
-         * ---------------------------------------------------------- */
+        /* explicit midnight */
         if (argc == 6 && !strcmp(argv[4], "midnight")) {
             int hh, mm;
             if (!parse_time_hm(argv[5], &hh, &mm)) {
@@ -940,11 +1002,7 @@ static void cmd_event(int argc, char **argv)
             goto add_event;
         }
 
-        /* ------------------------------------------------------------
-         * solar anchors
-         * event add door on solar sunrise +10
-         * event add door off solar sunset -15
-         * ---------------------------------------------------------- */
+        /* solar anchors */
         if (argc == 7 && !strcmp(argv[4], "solar")) {
 
             if (!strcmp(argv[5], "sunrise"))
@@ -966,11 +1024,7 @@ static void cmd_event(int argc, char **argv)
             goto add_event;
         }
 
-        /* ------------------------------------------------------------
-         * civil anchors
-         * event add door on civil dawn +0
-         * event add door off civil dusk +5
-         * ---------------------------------------------------------- */
+        /* civil anchors */
         if (argc == 7 && !strcmp(argv[4], "civil")) {
 
             if (!strcmp(argv[5], "dawn"))
@@ -996,6 +1050,7 @@ static void cmd_event(int argc, char **argv)
         return;
 
 add_event:
+        /* No refnums: keep zero */
         ev.refnum = 0;
 
         if (!config_events_add(&ev)) {
@@ -1008,18 +1063,83 @@ add_event:
         return;
     }
 
-    /* ------------------------------------------------------------------ */
-
     console_puts("?\n");
 }
-
 
 
 static void cmd_next(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
-    console_puts("next: not yet implemented\n");
+
+    ensure_cfg_loaded();
+
+    uint16_t now = rtc_minutes_since_midnight();
+
+    /* Compute solar times */
+    struct solar_times sol;
+    bool have_sol = false;
+
+    double lat = (double)g_cfg.latitude_e4 / 10000.0;
+    double lon = (double)g_cfg.longitude_e4 / 10000.0;
+
+    int tz = g_cfg.tz;
+    if (g_cfg.honor_dst &&
+        is_us_dst(g_date_y, g_date_mo, g_date_d, g_time_h)) {
+        tz += 1;
+    }
+
+    have_sol = solar_compute(
+        g_date_y, g_date_mo, g_date_d,
+        lat, lon,
+        (int8_t)tz,
+        &sol
+    );
+
+    size_t count = 0;
+    const Event *events = config_events_get(&count);
+
+    const Event *best = NULL;
+    uint16_t best_min = 0;
+
+    for (size_t i = 0; i < count; i++) {
+        uint16_t m;
+        if (!resolve_when(&events[i].when,
+                          have_sol ? &sol : NULL,
+                          &m))
+            continue;
+
+        if (m <= now)
+            continue;
+
+        if (!best || m < best_min) {
+            best = &events[i];
+            best_min = m;
+        }
+    }
+
+    if (!best) {
+        console_puts("next: none today\n");
+        return;
+    }
+
+    mini_printf("next: %02u:%02u ",
+                best_min / 60,
+                best_min % 60);
+
+    const char *dev = "?";
+    if (best->device_id < device_count) {
+        const Device *d = devices[best->device_id];
+        if (d && d->name)
+            dev = d->name;
+    }
+
+    console_puts(dev);
+    console_putc(' ');
+    console_puts(action_name(best->action));
+    console_putc(' ');
+    when_print(&best->when);
+    console_putc('\n');
 }
 
 #ifdef HOST_BUILD
@@ -1144,7 +1264,7 @@ typedef struct {
        "next\n" \
        "  Display the next resolved scheduler event (if any)\n" \
      ) \
-     X(event, 1, 7, cmd_event, \
+     X(event, 0, 7, cmd_event, \
         "Event commands", \
         "event list\n" \
         "event add <device> <on|off> HH:MM\n" \
