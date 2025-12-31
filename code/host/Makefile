@@ -40,6 +40,7 @@ SRCS := \
 	console_cmds.cpp \
 	console_time.cpp \
 	config_events.cpp \
+	next_event.cpp \
 	scheduler.cpp \
 	mini_printf.cpp \
 	devices.cpp \

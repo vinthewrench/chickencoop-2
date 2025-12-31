@@ -44,6 +44,7 @@
 #include "events.h"
 #include "config_events.h"
 #include "resolve_when.h"
+#include "next_event.h"
 
 #include "solar.h"
 #include "rtc.h"
@@ -1066,7 +1067,6 @@ add_event:
     console_puts("?\n");
 }
 
-
 static void cmd_next(int argc, char **argv)
 {
     (void)argc;
@@ -1076,7 +1076,7 @@ static void cmd_next(int argc, char **argv)
 
     uint16_t now = rtc_minutes_since_midnight();
 
-    /* Compute solar times */
+    /* Compute solar times once */
     struct solar_times sol;
     bool have_sol = false;
 
@@ -1090,8 +1090,11 @@ static void cmd_next(int argc, char **argv)
     }
 
     have_sol = solar_compute(
-        g_date_y, g_date_mo, g_date_d,
-        lat, lon,
+        g_date_y,
+        g_date_mo,
+        g_date_d,
+        lat,
+        lon,
         (int8_t)tz,
         &sol
     );
@@ -1099,46 +1102,44 @@ static void cmd_next(int argc, char **argv)
     size_t count = 0;
     const Event *events = config_events_get(&count);
 
-    const Event *best = NULL;
-    uint16_t best_min = 0;
+    size_t idx;
+    uint16_t minute;
+    bool tomorrow;
 
-    for (size_t i = 0; i < count; i++) {
-        uint16_t m;
-        if (!resolve_when(&events[i].when,
+    if (!next_event_today(events,
+                          count,
                           have_sol ? &sol : NULL,
-                          &m))
-            continue;
-
-        if (m <= now)
-            continue;
-
-        if (!best || m < best_min) {
-            best = &events[i];
-            best_min = m;
-        }
-    }
-
-    if (!best) {
-        console_puts("next: none today\n");
+                          now,
+                          &idx,
+                          &minute,
+                          &tomorrow)) {
+        console_puts("next: none\n");
         return;
     }
 
-    mini_printf("next: %02u:%02u ",
-                best_min / 60,
-                best_min % 60);
+    if (tomorrow)
+        console_puts("next: tomorrow ");
+    else
+        console_puts("next: ");
+
+    mini_printf("%02u:%02u ",
+                minute / 60,
+                minute % 60);
+
+    const Event *ev = &events[idx];
 
     const char *dev = "?";
-    if (best->device_id < device_count) {
-        const Device *d = devices[best->device_id];
+    if (ev->device_id < device_count) {
+        const Device *d = devices[ev->device_id];
         if (d && d->name)
             dev = d->name;
     }
 
     console_puts(dev);
     console_putc(' ');
-    console_puts(action_name(best->action));
+    console_puts(action_name(ev->action));
     console_putc(' ');
-    when_print(&best->when);
+    when_print(&ev->when);
     console_putc('\n');
 }
 
