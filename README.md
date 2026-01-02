@@ -21,46 +21,69 @@ The build system is intentionally explicit and boring:
 .
 ├── Makefile                 # Top-level orchestrator
 ├── README.md                # This document
+├── coop.cfg                 # Runtime configuration (example/default)
 ├── firmware/                # AVR firmware (avr-g++)
 │   ├── Makefile
-│   ├── main.cpp
-│   ├── uart.cpp
-│   ├── rtc.cpp
-│   ├── uptime.cpp
-│   └── platform/
+│   ├── main_firmware.cpp    # Firmware entry point (CONFIG-only bring-up)
+│   ├── uart.cpp             # Firmware service
+│   ├── rtc.cpp              # Firmware service (RTC implementation)
+│   ├── uptime.cpp           # Firmware service
+│   └── platform/            # Board-specific AVR code (this hardware)
 │       ├── config_eeprom.cpp
 │       ├── config_sw_avr.cpp
 │       ├── console_io_avr.cpp
 │       ├── door_avr.cpp
-│       └── lock_avr.cpp
+│       ├── lock_avr.cpp
+│       ├── relays_avr.cpp
+│       └── i2c_avr.cpp
 ├── host/                    # Desktop test console (clang++)
 │   ├── Makefile
-│   ├── main_host.cpp
-│   └── platform/
+│   ├── main_host.cpp        # Host simulator entry point
+│   └── platform/            # Simulated hardware + host glue
 │       ├── config_host.cpp
 │       ├── config_sw_host.cpp
 │       ├── console_io_host.cpp
+│       ├── door_hw_host.cpp
 │       ├── door_host.cpp
+│       ├── lock_hw_host.cpp
 │       ├── lock_host.cpp
 │       ├── rtc_host.cpp
-│       └── uptime_host.cpp
-└── src/                     # Shared code (no main, no .o files)
+│       ├── uptime_host.cpp
+│       └── relay_host.cpp
+└── src/                     # Shared code (no main, no generated files)
     ├── config.h
+    ├── config_common.cpp
     ├── config_sw.h
     ├── door.h
-    ├── door_time.cpp
+    ├── door.cpp             # TEMP console/test stub
+    ├── door_hw.h
     ├── lock.h
+    ├── lock.cpp             # TEMP console/test stub
+    ├── lock_hw.h
     ├── rtc.h
+    ├── rtc_common.cpp
     ├── solar.cpp / solar.h
     ├── time_dst.cpp / time_dst.h
     ├── uart.h
     ├── uptime.h
-    └── console/
-        ├── console.cpp / console.h
-        ├── console_cmds.cpp
-        ├── console_time.cpp / console_time.h
-        ├── console_io.h
-        ├── mini_printf.cpp / mini_printf.h
+    ├── scheduler.cpp / scheduler.h
+    ├── scheduler_reconcile.cpp / scheduler_reconcile.h
+    ├── next_event.cpp / next_event.h
+    ├── events.h
+    ├── relay.h
+    ├── console/
+    │   ├── console.cpp / console.h
+    │   ├── console_cmds.cpp
+    │   ├── console_time.cpp / console_time.h
+    │   ├── console_io.h
+    │   └── mini_printf.cpp / mini_printf.h
+    └── devices/
+        ├── device.h
+        ├── devices.h
+        ├── devices.cpp
+        ├── door_device.cpp
+        ├── relay_device.cpp
+        └── foo_device.cpp
 ```
 
 ### Rules
@@ -106,7 +129,7 @@ The host build is a functional test harness for:
 - Solar and schedule calculations
 - Configuration handling
 - Console behavior
-- Simulated RTC, EEPROM, and uptime
+- Simulated RTC, EEPROM, relays, door, lock, and uptime
 
 ### Build
 ```sh
@@ -125,6 +148,7 @@ exit
 ```
 
 The host build uses **clang++** and builds entirely under `host/build/`.
+The `host/src/` directory contains build artifacts only and is not source code.
 
 ---
 
