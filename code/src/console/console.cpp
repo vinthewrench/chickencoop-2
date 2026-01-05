@@ -18,6 +18,7 @@
 #include "console/console_time.h"
 #include "rtc.h"
 #include "uptime.h"
+#include "config.h"
 
 #include <string.h>
 
@@ -30,6 +31,7 @@ static int idx;
 static uint32_t last_activity_sec;
 
 extern void console_dispatch(int argc, char **argv);
+extern struct config g_cfg;
 
 bool console_should_exit(void)
 {
@@ -44,6 +46,13 @@ void console_init(void)
         first = false;
 
         mini_printf("Chicken Coop Controller %s\n", PROJECT_VERSION);
+
+        /* LOAD CONFIG HERE */
+         bool cfg_ok = config_load(&g_cfg);
+          if (!cfg_ok) {
+                 console_puts("WARNING: CONFIG INVALID, USING DEFAULTS\n");
+             }
+
 
         if (rtc_time_is_set()) {
             int y, mo, d, h, m, s;

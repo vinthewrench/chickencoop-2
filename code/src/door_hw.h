@@ -7,12 +7,13 @@
  * Notes:
  *  - Pure hardware abstraction
  *  - Direction via INA / INB
- *  - Power gated via EN (PWM pin used as digital enable)
+ *  - Power gated via EN (digital enable, no PWM)
  *  - No timing, no state, no policy
+ *  - Safe to call without explicit initialization
  *
  * LOCKED DESIGN
  *
- * Updated: 2026-01-02
+ * Updated: 2026-01-05
  */
 
 #pragma once
@@ -21,14 +22,11 @@
 extern "C" {
 #endif
 
-/* Initialize door actuator control pins */
-void door_hw_init(void);
-
 /* Set direction only (does not apply power) */
 void door_hw_set_open_dir(void);    /* extend */
 void door_hw_set_close_dir(void);   /* retract */
 
-/* Power gate */
+/* Power gate control */
 void door_hw_enable(void);
 void door_hw_disable(void);
 

@@ -49,5 +49,10 @@ void config_defaults(struct config *cfg)
     cfg->latitude_e4  =  344653;
     cfg->longitude_e4 = -933628;
 
+    /* ---- Mechanical timing defaults ---- */
+
+      cfg->door_travel_ms = 8000;   /* 8 seconds full open/close */
+      cfg->lock_pulse_ms  = 500;    /* 500 ms solenoid pulse */
+
     /* ---- Any future fields MUST be initialized here ---- */
 }

@@ -50,9 +50,7 @@ SRCS := \
 	relay_device.cpp \
 	relay_host.cpp \
 	door_hw_host.cpp \
-	lock_hw_host.cpp \
-	lock.cpp \
-	door.cpp \
+	door_lock_host.cpp \
 	console_io_host.cpp \
 	config_sw_host.cpp \
 	config_host.cpp \

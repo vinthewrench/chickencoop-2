@@ -60,8 +60,6 @@ SRCS := \
 	../src/config_common.cpp \
 	../src/time_dst.cpp \
 	../src/scheduler.cpp \
-	../src/lock.cpp \
-	../src/door.cpp \
 	../src/scheduler_reconcile.cpp \
 	../src/next_event.cpp \
 	../src/config_events.cpp \
@@ -76,7 +74,7 @@ SRCS := \
 	../src/console/console_time.cpp \
 	../src/console/mini_printf.cpp \
 	platform/door_avr.cpp \
-	platform/lock_avr.cpp \
+	platform/door_lock_avr.cpp \
 	platform/relays_avr.cpp \
 	platform/i2c_avr.cpp \
 	platform/door_led.cpp \

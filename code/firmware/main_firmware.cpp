@@ -1,5 +1,5 @@
 /*
- * main.cpp
+ * main_firmware.cpp
  *
  * Project: Chicken Coop Controller
  * Purpose: Firmware entry point
@@ -11,21 +11,8 @@
  *
  * BOOT MODES (CURRENT IMPLEMENTATION):
  * -----------------------------------
- *  - CONFIG mode only (service / bring-up)
- *  - RUN mode intentionally NOT implemented yet
- *
- * CONFIG MODE:
- *  - Selected by a physical slide switch
- *  - Latched once per boot
- *  - Provides a console service session
- *  - Exits only when the console requests exit
- *
- * POST-CONFIG BEHAVIOR:
- *  - Firmware intentionally parks forever
- *  - No scheduler, no door logic, no automation
- *  - Reboot is required to re-evaluate boot mode
- *
- * This structure is intentional and enforced during early hardware bring-up.
+ *  - CONFIG mode (service / bring-up)
+ *  - RUN mode skeleton (health indication only)
  *
  * Hardware: Chicken Coop Controller V3.0
  *
@@ -33,6 +20,7 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "config.h"
 #include "config_sw.h"
@@ -42,6 +30,7 @@
 #include "rtc.h"
 #include "uptime.h"
 #include "door_led.h"
+#include "door_lock.h"
 
 int main(void)
 {
@@ -51,48 +40,65 @@ int main(void)
     uart_init();
     relay_init();
     uptime_init();
+
     rtc_init();        /* RTC present; policy handled elsewhere */
     door_led_init();
+    lock_init();
 
     /* ------------------------------------------------------------------
-     * Configuration validity check
+     * Load persistent configuration (EEPROM, defaults on failure)
      * ------------------------------------------------------------------ */
-    if (!rtc_time_is_set()) {
-        /* First power-up or dead battery: demand user attention */
-        door_led_set(DOOR_LED_BLINK_RED);
-    }
-
-    /* Load persistent configuration (EEPROM, defaults on failure) */
     bool cfg_ok = config_load(&g_cfg);
     (void)cfg_ok;   /* intentionally unused during bring-up */
 
     /* ------------------------------------------------------------------
-     * CONFIG mode handling
+     * CONFIG mode handling (latched once per boot)
      * ------------------------------------------------------------------ */
     static bool config_consumed = false;
 
     if (config_sw_state() && !config_consumed) {
         config_consumed = true;
 
+        if (!rtc_time_is_set()) {
+            door_led_set(DOOR_LED_BLINK_RED);
+        }
+
         console_init();
         while (!console_should_exit()) {
             console_poll();
-            door_led_tick(uptime_millis());
+
+            uint32_t now_ms = uptime_millis();
+            door_led_tick(now_ms);
+            lock_tick(now_ms);
         }
     }
 
     /* ------------------------------------------------------------------
-     * RUN MODE (NOT YET IMPLEMENTED)
-     * ------------------------------------------------------------------
-     * When implemented, RUN mode will:
-     *  - configure RTC alarms
-     *  - enter sleep/wake cycles
-     *  - run the scheduler
-     *  - control door and lock hardware
-     *
-     * Until then, firmware must remain inert.
-     */
+     * RUN MODE (SKELETON ONLY)
+     * ------------------------------------------------------------------ */
+
+    if (!rtc_time_is_set()) {
+        door_led_set(DOOR_LED_BLINK_RED);
+        for (;;) {
+            uint32_t now_ms = uptime_millis();
+            door_led_tick(now_ms);
+            lock_tick(now_ms);
+        }
+    }
+
+    /* RTC valid: brief green, then idle */
+    door_led_set(DOOR_LED_GREEN);
+    uint32_t t0_ms = uptime_millis();
+    while ((uint32_t)(uptime_millis() - t0_ms) < 1000u) {
+        uint32_t now_ms = uptime_millis();
+        door_led_tick(now_ms);
+        lock_tick(now_ms);
+    }
+    door_led_set(DOOR_LED_OFF);
+
     for (;;) {
-        door_led_tick(uptime_millis());
+        uint32_t now_ms = uptime_millis();
+        door_led_tick(now_ms);
+        lock_tick(now_ms);
     }
 }

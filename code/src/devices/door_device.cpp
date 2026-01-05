@@ -2,27 +2,28 @@
  * door_device.cpp
  *
  * Project: Chicken Coop Controller
- * Purpose: Door device abstraction (temporary hardware drive)
+ * Purpose: Door device abstraction
  *
  * Notes:
- *  - TEMPORARY: directly drives door_hw
- *  - No timing, no blocking
- *  - Device state reflects scheduler intent only
- *  - Will be refactored to use door_control
+ *  - Implements Device interface
+ *  - Owns door + lock sequencing
+ *  - No timing or sensing yet
+ *  - OPEN always unlocks first
+ *  - CLOSE unlocks, moves door, then engages lock
  *
- * Updated: 2026-01-02
+ * Updated: 2026-01-05
  */
 
 #include "device.h"
-#include "door.h"
 #include "door_hw.h"
-
-static dev_state_t door_state = DEV_STATE_UNKNOWN;
+#include "door_lock.h"
 
 /*
- * Scheduler-declared state only.
- * This is NOT physical position.
+ * Scheduler-visible state only.
+ * This reflects requested intent, not physical truth.
  */
+static dev_state_t door_state = DEV_STATE_UNKNOWN;
+
 static dev_state_t door_get_state(void)
 {
     return door_state;
@@ -35,19 +36,33 @@ static void door_set_state(dev_state_t state)
 
     door_state = state;
 
-    if (state == DEV_STATE_ON) {
+    switch (state) {
+
+    case DEV_STATE_ON:
         /* OPEN */
+        lock_release();              /* ALWAYS unlock first */
         door_hw_set_open_dir();
         door_hw_enable();
-    }
-    else if (state == DEV_STATE_OFF) {
+        break;
+
+    case DEV_STATE_OFF:
         /* CLOSE */
+        lock_release();              /* ALWAYS unlock first */
         door_hw_set_close_dir();
         door_hw_enable();
-    }
-    else {
-        /* UNKNOWN → safest action is stop */
+
+        /*
+         * NOTE:
+         * Lock is engaged immediately after close command.
+         * Timing will be handled by door_control later.
+         */
+        lock_engage();
+        break;
+
+    default:
+        /* UNKNOWN → safest action */
         door_hw_stop();
+        break;
     }
 }
 

@@ -8,81 +8,76 @@
  *  - Offline system
  *  - Deterministic behavior
  *  - EEPROM contents are untrusted
- *  - Magic + version guard against garbage and layout changes
+ *  - Config is self-describing (magic + version + checksum)
  *
- * Updated: 2025-12-30
+ * Updated: 2026-01-05
  */
 
 #include "config.h"
+
 #include <avr/eeprom.h>
-#include <string.h>
 #include <stddef.h>
 
 /* --------------------------------------------------------------------------
- * EEPROM layout
+ * EEPROM storage
  * -------------------------------------------------------------------------- */
 
-#define CONFIG_MAGIC   0x434F4F50UL  /* 'COOP' */
-#define CONFIG_VERSION 1
-
-struct config_blob {
-    uint32_t      magic;
-    uint8_t       version;
-    struct config cfg;
-};
-
-/* Single-slot EEPROM storage */
-static struct config_blob EEMEM ee_cfg_blob;
+/* Single-slot EEPROM storage for full config */
+static struct config EEMEM ee_cfg;
 
 /* --------------------------------------------------------------------------
  * Public API
  * -------------------------------------------------------------------------- */
- bool config_load(struct config *cfg)
- {
-     struct config_blob blob;
 
-     eeprom_read_block(&blob, &ee_cfg_blob, sizeof(blob));
-
-     /* Validate EEPROM contents */
-     if (blob.magic != CONFIG_MAGIC ||
-         blob.version != CONFIG_VERSION) {
-
-         /* Fresh or invalid EEPROM */
-         config_defaults(cfg);
-         return false;
-     }
-
-     /* Verify checksum */
-     uint16_t stored = blob.cfg.checksum;
-     uint16_t computed = config_fletcher16(
-         &blob.cfg,
-         offsetof(struct config, checksum)
-     );
-
-     if (stored != computed) {
-         /* Corrupt config */
-         config_defaults(cfg);
-         return false;
-     }
-
-     *cfg = blob.cfg;
-     return true;
- }
-
-void config_save(const struct config *cfg)
+bool config_load(struct config *cfg)
 {
-    struct config_blob blob;
+    struct config tmp;
 
-    blob.magic   = CONFIG_MAGIC;
-    blob.version = CONFIG_VERSION;
-    blob.cfg     = *cfg;
+    /* Read raw config from EEPROM */
+    eeprom_read_block(&tmp, &ee_cfg, sizeof(tmp));
 
-    /* Compute checksum over config */
-    blob.cfg.checksum = 0;
-    blob.cfg.checksum = config_fletcher16(
-        &blob.cfg,
+    /* Validate identity */
+    if (tmp.magic != CONFIG_MAGIC ||
+        tmp.version != CONFIG_VERSION) {
+
+        /* Fresh EEPROM or incompatible layout */
+        config_defaults(cfg);
+        return false;
+    }
+
+    /* Validate checksum */
+    uint16_t stored = tmp.checksum;
+    uint16_t computed = config_fletcher16(
+        &tmp,
         offsetof(struct config, checksum)
     );
 
-    eeprom_update_block(&blob, &ee_cfg_blob, sizeof(blob));
+    if (stored != computed) {
+        /* Corrupt EEPROM contents */
+        config_defaults(cfg);
+        return false;
+    }
+
+    /* Accept config */
+    *cfg = tmp;
+    return true;
+}
+
+void config_save(const struct config *cfg)
+{
+    struct config tmp = *cfg;
+
+    /* Ensure identity is correct */
+    tmp.magic   = CONFIG_MAGIC;
+    tmp.version = CONFIG_VERSION;
+
+    /* Compute checksum */
+    tmp.checksum = 0;
+    tmp.checksum = config_fletcher16(
+        &tmp,
+        offsetof(struct config, checksum)
+    );
+
+    /* Write atomically */
+    eeprom_update_block(&tmp, &ee_cfg, sizeof(tmp));
 }

@@ -1,5 +1,5 @@
 /*
- * door_host.cpp
+ * door_lock_host.cpp
  *
  * Project: Chicken Coop Controller
  * Purpose: Host door platform stub

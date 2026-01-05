@@ -7,35 +7,53 @@
  * Notes:
  *  - Offline system
  *  - Deterministic behavior
- *  - No device-specific logic
- *  - Stores declarative scheduling intent only
+ *  - Self-describing configuration
+ *  - Identical layout on host and AVR
  *
- * Updated: 2025-12-30
+ * Updated: 2026-01-05
  */
 
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "config_events.h"
 
-/* Global configuration */
-struct config {
-    int32_t latitude_e4;    /* degrees * 10000 */
-    int32_t longitude_e4;   /* degrees * 10000 */
-    int32_t tz;             /* minutes offset from UTC */
-    uint8_t honor_dst;      /* 0 or 1 */
-    uint8_t _pad[3];        /* explicit padding to 32-bit boundary */
+/* Config identity */
+#define CONFIG_MAGIC   0x434F4F50UL  /* 'COOP' */
+#define CONFIG_VERSION 1
 
+struct config {
+    /* Identity */
+    uint32_t magic;
+    uint8_t  version;
+    uint8_t  _pad0[3];          /* align to 32-bit */
+
+    /* Location / time */
+    int32_t latitude_e4;        /* degrees * 10000 */
+    int32_t longitude_e4;       /* degrees * 10000 */
+    int32_t tz;                 /* minutes offset from UTC */
+    uint8_t honor_dst;          /* 0 or 1 */
+
+    /* Mechanical timing (physical constants) */
+    uint16_t door_travel_ms;    /* full open or close time */
+    uint16_t lock_pulse_ms;     /* solenoid energize duration */
+
+    uint8_t _pad1[2];           /* align events */
+
+    /* Scheduler intent */
     struct Event events[MAX_EVENTS];
 
-    uint16_t checksum;      /* Fletcher-16 over all fields above */
+    /* Integrity */
+    uint16_t checksum;          /* Fletcher-16 over all fields above */
 };
 
+/* API */
 bool config_load(struct config *cfg);
 void config_save(const struct config *cfg);
 void config_defaults(struct config *cfg);
 
-/* Checksum (shared: host + AVR) */
+/* Checksum helper */
 uint16_t config_fletcher16(const void *data, size_t len);
 
 extern struct config g_cfg;

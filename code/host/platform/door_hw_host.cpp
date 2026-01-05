@@ -8,9 +8,10 @@
  *  - Host-only implementation
  *  - Mirrors door_hw API used on AVR
  *  - Logs direction and enable state
- *  - No timing, no state machine
+ *  - No timing, no safety, no policy
+ *  - No explicit initialization required
  *
- * Updated: 2026-01-02
+ * Updated: 2026-01-05
  */
 
 #include "door_hw.h"
@@ -19,13 +20,6 @@
 
 static const char *g_dir = "NEUTRAL";
 static int g_en = 0;
-
-void door_hw_init(void)
-{
-    g_dir = "NEUTRAL";
-    g_en = 0;
-    printf("[DOOR_HW] init (INA/INB/EN)\n");
-}
 
 void door_hw_set_open_dir(void)
 {

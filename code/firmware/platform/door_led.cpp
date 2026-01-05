@@ -13,6 +13,7 @@
  *  - Firmware-only implementation
  *  - Timing behavior is fixed and internal
  *  - No policy decisions in this module
+ *  - Pulse modes are one-shot and self-terminate to OFF
  *  - Host provides a no-op / logging implementation
  *
  * Hardware assumptions (LOCKED, V3.0):
@@ -23,7 +24,8 @@
  *
  * Updated: 2026-01-05
  */
- #include "door_led.h"
+
+#include "door_led.h"
 
 #include <avr/io.h>
 
@@ -37,7 +39,6 @@
 
 static door_led_mode_t current = DOOR_LED_OFF;
 static uint32_t        t0 = 0;
-static uint8_t         phase = 0;
 
 /* --- low-level drive --- */
 
@@ -65,7 +66,7 @@ void door_led_init(void)
     DDRB |= (1 << LED_IN1) | (1 << LED_IN2);
     led_off();
     current = DOOR_LED_OFF;
-    phase = 0;
+    t0 = 0;
 }
 
 void door_led_set(door_led_mode_t mode)
@@ -74,14 +75,21 @@ void door_led_set(door_led_mode_t mode)
         return;
 
     current = mode;
-    phase = 0;
     t0 = 0;
 
-    /* immediate visual update */
+    /* Immediate visual update */
     switch (current) {
-    case DOOR_LED_OFF:          led_off();   break;
-    case DOOR_LED_RED:          led_red();   break;
-    case DOOR_LED_GREEN:        led_green(); break;
+    case DOOR_LED_OFF:
+        led_off();
+        break;
+
+    case DOOR_LED_RED:
+        led_red();
+        break;
+
+    case DOOR_LED_GREEN:
+        led_green();
+        break;
 
     case DOOR_LED_PULSE_RED:
     case DOOR_LED_PULSE_GREEN:
@@ -94,14 +102,11 @@ void door_led_set(door_led_mode_t mode)
 
 void door_led_tick(uint32_t now_ms)
 {
-    if (t0 == 0)
-        t0 = now_ms;
-
     uint32_t dt = now_ms - t0;
 
     switch (current) {
 
-    /* ---------- PULSE ---------- */
+    /* ---------- PULSE (one-shot) ---------- */
 
     case DOOR_LED_PULSE_GREEN:
         if (dt < LED_PULSE_MS) {
@@ -124,27 +129,23 @@ void door_led_tick(uint32_t now_ms)
     /* ---------- BLINK ---------- */
 
     case DOOR_LED_BLINK_GREEN:
-        if (dt >= LED_BLINK_ON + LED_BLINK_OFF) {
+        if (dt >= (LED_BLINK_ON + LED_BLINK_OFF))
             t0 = now_ms;
-            phase ^= 1;
-        }
-        if (dt < LED_BLINK_ON) {
+
+        if (dt < LED_BLINK_ON)
             led_green();
-        } else {
+        else
             led_off();
-        }
         break;
 
     case DOOR_LED_BLINK_RED:
-        if (dt >= LED_BLINK_ON + LED_BLINK_OFF) {
+        if (dt >= (LED_BLINK_ON + LED_BLINK_OFF))
             t0 = now_ms;
-            phase ^= 1;
-        }
-        if (dt < LED_BLINK_ON) {
+
+        if (dt < LED_BLINK_ON)
             led_red();
-        } else {
+        else
             led_off();
-        }
         break;
 
     default:

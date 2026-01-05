@@ -50,8 +50,7 @@
 #include "solar.h"
 #include "rtc.h"
 #include "config.h"
-#include "lock.h"
-#include "door.h"
+#include "door_lock.h"
 #include "relay.h"
 
 #include "uptime.h"
@@ -650,6 +649,32 @@ static void cmd_set(int argc, char **argv)
         return;
     }
 
+    /* ---------------- door timing ---------------- */
+
+       if (!strcmp(argv[1], "door_travel_ms") && argc == 3) {
+           long v = strtol(argv[2], NULL, 10);
+           if (v < 100 || v > 60000) {   /* 0.1s .. 60s */
+               console_puts("ERROR\n");
+               return;
+           }
+           g_cfg.door_travel_ms = (uint16_t)v;
+           g_cfg_dirty = true;
+           console_puts("OK\n");
+           return;
+       }
+
+       if (!strcmp(argv[1], "lock_pulse_ms") && argc == 3) {
+           long v = strtol(argv[2], NULL, 10);
+           if (v < 50 || v > 5000) {   /* 50ms .. 5s */
+               console_puts("ERROR\n");
+               return;
+           }
+           g_cfg.lock_pulse_ms = (uint16_t)v;
+           g_cfg_dirty = true;
+           console_puts("OK\n");
+           return;
+       }
+
     console_puts("?\n");
 }
 
@@ -730,7 +755,7 @@ static void cmd_set(int argc, char **argv)
      if (argc == 3) {
          uint8_t id;
 
-         /* NOTE: 0 == success */
+         /* NOTE: 0 == fail */
          if (device_lookup_id(argv[1], &id) == 0) {
              console_puts("ERROR\n");
              return;
@@ -821,20 +846,26 @@ static void cmd_door(int argc, char **argv)
         return;
     }
 
+    /* Map door → device door on|off */
+    char *dev_argv[3];
+    dev_argv[0] = (char *)"device";
+    dev_argv[1] = (char *)"door";
+
     if (!strcmp(argv[1], "open")) {
-        console_puts("DOOR: open\n");
-        door_open();
+        dev_argv[2] = (char *)"on";
+    }
+    else if (!strcmp(argv[1], "close")) {
+        dev_argv[2] = (char *)"off";
+    }
+    else {
+        console_puts("?\n");
         return;
     }
 
-    if (!strcmp(argv[1], "close")) {
-        console_puts("DOOR: close\n");
-        door_close();
-        return;
-    }
-
-    console_puts("?\n");
+    /* Delegate to canonical implementation */
+    cmd_device(3, dev_argv);
 }
+
 
 // src/console/console_cmds.cpp
 
@@ -883,6 +914,29 @@ static void cmd_led(int argc, char **argv)
 
     console_puts("OK\n");
 }
+
+static void cmd_rtc(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    if (!rtc_time_is_set()) {
+        console_puts("RTC: INVALID (oscillator stopped or time not set)\n");
+        return;
+    }
+
+    int y, mo, d, h, m, s;
+    rtc_get_time(&y, &mo, &d, &h, &m, &s);
+
+    console_puts("RTC: VALID\n");
+
+    mini_printf("date: %04d-%02d-%02d\n", y, mo, d);
+    mini_printf("time: %02d:%02d:%02d\n", h, m, s);
+
+    uint16_t mins = rtc_minutes_since_midnight();
+    mini_printf("minutes_since_midnight: %u\n", (unsigned)mins);
+}
+
 
 static void cmd_config(int, char **)
 {
@@ -958,6 +1012,10 @@ static void cmd_config(int, char **)
 
     mini_printf("dst  : %s\n",
                 g_cfg.honor_dst ? "ON (US rules)" : "OFF");
+
+    /* mechanical timing */
+     mini_printf("door_travel_ms : %u\n", g_cfg.door_travel_ms);
+     mini_printf("lock_pulse_ms  : %u\n", g_cfg.lock_pulse_ms);
 
     console_putc('\n');
 }
@@ -1441,6 +1499,12 @@ typedef struct {
         "led pulse_green\n" \
         "led blink_red\n" \
         "led blink_green\n" \
+      ) \
+      X(rtc, 0, 0, cmd_rtc, \
+        "Show raw RTC state", \
+        "rtc\n" \
+        "  Display raw RTC date/time and validity\n" \
+        "  No DST, no staging, no scheduler logic\n" \
       )
 
  /* Commands that only exist when their handlers exist */

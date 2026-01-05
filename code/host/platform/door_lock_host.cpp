@@ -13,7 +13,7 @@
  */
 
 // host/platform/lock_host.cpp
-#include "lock.h"
+#include "door_lock.h"
 #include "console/mini_printf.h"
 
 
@@ -26,3 +26,8 @@ void lock_release(void)
 {
     mini_printf("[HOST] lock_release()\n");
 }
+
+/* not used */
+void lock_tick(uint32_t now_ms){
+     (void)now_ms;
+};

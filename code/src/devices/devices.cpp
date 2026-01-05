@@ -34,6 +34,14 @@ const Device *device_by_id(uint8_t id)
     return devices[id];
 }
 
+/*
+ * Look up a device by name.
+ *
+ * Returns:
+ *  - 1 if the device is found (success), and *out_id is set
+ *  - 0 if not found or on invalid arguments
+ */
+
 int device_lookup_id(const char *name, uint8_t *out_id)
 {
     if (!name || !out_id)
