@@ -41,8 +41,8 @@
 
 #define RELAY_PULSE_MS  20
 
-#define RELAY1_SET_BIT    PD4
-#define RELAY1_RESET_BIT  PD5
+#define RELAY1_SET_BIT    PD5
+#define RELAY1_RESET_BIT  PD4
 #define RELAY2_SET_BIT    PD6
 #define RELAY2_RESET_BIT  PD7
 

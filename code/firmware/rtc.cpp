@@ -7,10 +7,21 @@
  * Notes:
  *  - Offline system
  *  - Deterministic behavior
- *  - No DST or timezone logic
- *  - Alarm interrupt used for wake
+ *  - No DST or timezone logic (handled elsewhere)
+ *  - Alarm interrupt used solely for wake from sleep
  *
- * Updated: 2025-12-29
+ * Hardware assumptions (LOCKED v2.5):
+ *  - RTC: NXP PCF8523
+ *  - INT output is open-drain, active-low, latched until AF is cleared
+ *  - RTC INT is wired to PB7 (PCINT7)
+ *  - External pull-up (~10 kΩ) present on RTC INT line
+ *
+ * Interrupt semantics:
+ *  - Alarm INT remains asserted (low) until AF is cleared
+ *  - Wake logic MUST confirm alarm source by reading RTC flags
+ *  - PCINT edge behavior (assert + release) is expected and harmless
+ *
+ * Updated: 2026-01-02
  */
 
 #include "rtc.h"
@@ -120,6 +131,7 @@ bool rtc_alarm_set_hm(uint8_t hour, uint8_t minute)
 {
     uint8_t a[4];
 
+    /* Minute/hour match only; day and weekday disabled */
     a[0] = bin_to_bcd(minute) & 0x7F;
     a[1] = bin_to_bcd(hour)   & 0x3F;
     a[2] = ALARM_DISABLE;
@@ -134,7 +146,11 @@ bool rtc_alarm_set_hm(uint8_t hour, uint8_t minute)
         return false;
     }
 
-    /* Enable alarm interrupt and clear stale flag */
+    /*
+     * Enable alarm interrupt and clear any stale alarm flag.
+     * INT will assert low when the alarm matches and remain low
+     * until AF is cleared via rtc_alarm_clear_flag().
+     */
     c2 |= CTRL2_AIE_BIT;
     c2 &= (uint8_t)~CTRL2_AF_BIT;
 
@@ -161,6 +177,7 @@ void rtc_alarm_clear_flag(void)
         return;
     }
 
+    /* Clearing AF releases the INT line */
     c2 &= (uint8_t)~CTRL2_AF_BIT;
     (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_2, &c2, 1);
 }

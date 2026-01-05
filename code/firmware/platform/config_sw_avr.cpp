@@ -2,14 +2,20 @@
  * config_sw_avr.cpp
  *
  * Project: Chicken Coop Controller
- * Purpose: Source file
+ * Purpose: CONFIG slide switch (boot-time only)
  *
  * Notes:
  *  - Offline system
  *  - Deterministic behavior
  *  - No network dependencies
+ *  - CONFIG is sampled once per boot and cached
  *
- * Updated: 2025-12-29
+ * Hardware assumptions (LOCKED v2.5):
+ *  - CONFIG slide switch connects PC6 to GND when ON (active-low)
+ *  - Internal pull-up enabled
+ *  - CONFIG is NOT a wake source
+ *
+ * Updated: 2026-01-02
  */
 
 // firmware/platform/config_sw_avr.cpp
@@ -17,30 +23,29 @@
 #include <avr/io.h>
 
 /*
- * Hardware assumption:
- * - CONFIG slide switch connects PB4 to GND when ON (active-low).
- * - Internal pull-up enabled.
- *
- * If your wiring/polarity changes, this is the only place to edit.
+ * If wiring or polarity ever changes, this is the only file
+ * that should need to be modified.
  */
-#define CONFIG_SW_BIT PB4
+#define CONFIG_SW_BIT PC6
 
 static bool read_hw_state_once(void)
 {
-    // PB4 input
-    DDRB  &= (uint8_t)~_BV(CONFIG_SW_BIT);
-    // enable pull-up
-    PORTB |= _BV(CONFIG_SW_BIT);
+    /* PC6 input */
+    DDRC  &= (uint8_t)~_BV(CONFIG_SW_BIT);
+    /* enable internal pull-up */
+    PORTC |= _BV(CONFIG_SW_BIT);
 
-    // active-low
-    return (PINB & _BV(CONFIG_SW_BIT)) ? false : true;
+    /* active-low */
+    return (PINC & _BV(CONFIG_SW_BIT)) ? false : true;
 }
 
 bool config_sw_state(void)
 {
     static int8_t cached = -1;
+
     if (cached < 0) {
         cached = read_hw_state_once() ? 1 : 0;
     }
+
     return cached ? true : false;
 }
