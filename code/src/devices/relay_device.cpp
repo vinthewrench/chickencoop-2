@@ -63,12 +63,16 @@ Device relay1_device = {
     .name = "relay1",
     .get_state = relay1_get_state,
     .set_state = relay1_set_state,
-    .state_string = relay_state_string
+    .state_string = relay_state_string,
+    .tick = NULL
+
 };
 
 Device relay2_device = {
     .name = "relay2",
     .get_state = relay2_get_state,
     .set_state = relay2_set_state,
-    .state_string = relay_state_string
+    .state_string = relay_state_string,
+    .tick = NULL
+
 };

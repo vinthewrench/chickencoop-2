@@ -15,6 +15,7 @@
 
 #include "console/console.h"
 #include "uptime.h"
+#include "devices/devices.h"
 #include "door_led.h"
 
 int main(void)
@@ -29,6 +30,8 @@ int main(void)
 
     while (!console_should_exit()) {
         console_poll();
+        uint32_t now_ms = uptime_millis();
+        device_tick(now_ms);
     }
 
     return 0;

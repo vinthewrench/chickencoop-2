@@ -14,6 +14,7 @@
 
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 
 /* Device-visible state */
 typedef enum {
@@ -29,4 +30,6 @@ typedef struct {
     dev_state_t (*get_state)(void);
     void        (*set_state)(dev_state_t state);
     const char *(*state_string)(dev_state_t state);
+    void        (*tick)(uint32_t now_ms);
+
 } Device;

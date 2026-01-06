@@ -66,6 +66,7 @@ SRCS := \
 	../src/rtc_common.cpp \
 	../src/devices/devices.cpp \
 	../src/devices/door_device.cpp \
+	../src/devices/door_state_machine.cpp \
 	../src/devices/foo_device.cpp \
 	../src/devices/relay_device.cpp \
 	../src/resolve_when.cpp \

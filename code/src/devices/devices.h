@@ -24,3 +24,5 @@ extern const size_t device_count;
 /* Optional helpers (useful, not magic) */
 const Device *device_by_id(uint8_t id);
 int device_lookup_id(const char *name, uint8_t *out_id);
+
+void device_tick(uint32_t now_ms);

@@ -43,5 +43,7 @@ Device foo_device = {
     .name = "foo",
     .get_state = foo_get_state,
     .set_state = foo_set_state,
-    .state_string = foo_state_string
+    .state_string = foo_state_string,
+    .tick = NULL
+
 };

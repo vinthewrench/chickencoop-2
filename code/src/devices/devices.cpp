@@ -55,3 +55,13 @@ int device_lookup_id(const char *name, uint8_t *out_id)
     }
     return 0;
 }
+
+void device_tick(uint32_t now_ms)
+{
+    for (size_t i = 0; i < device_count; i++) {
+        const Device *dev = devices[i];
+
+        if (dev->tick)
+            dev->tick(now_ms);
+    }
+}

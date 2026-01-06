@@ -46,6 +46,7 @@ SRCS := \
 	mini_printf.cpp \
 	devices.cpp \
 	door_device.cpp \
+	door_state_machine.cpp \
 	foo_device.cpp \
 	relay_device.cpp \
 	relay_host.cpp \

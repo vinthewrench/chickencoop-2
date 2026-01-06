@@ -31,6 +31,7 @@
 #include "uptime.h"
 #include "door_led.h"
 #include "door_lock.h"
+#include "devices/devices.h"
 
 int main(void)
 {
@@ -70,6 +71,7 @@ int main(void)
             uint32_t now_ms = uptime_millis();
             door_led_tick(now_ms);
             lock_tick(now_ms);
+            device_tick(now_ms);
         }
     }
 
@@ -83,6 +85,7 @@ int main(void)
             uint32_t now_ms = uptime_millis();
             door_led_tick(now_ms);
             lock_tick(now_ms);
+            device_tick(now_ms);
         }
     }
 
@@ -93,12 +96,15 @@ int main(void)
         uint32_t now_ms = uptime_millis();
         door_led_tick(now_ms);
         lock_tick(now_ms);
+        device_tick(now_ms);
     }
+
     door_led_set(DOOR_LED_OFF);
 
     for (;;) {
         uint32_t now_ms = uptime_millis();
         door_led_tick(now_ms);
         lock_tick(now_ms);
+        device_tick(now_ms);
     }
 }
