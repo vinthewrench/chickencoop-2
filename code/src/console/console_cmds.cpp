@@ -462,7 +462,6 @@ static void cmd_solar(int argc, char **argv)
 }
 
 
-
 static void cmd_timeout(int argc, char **argv)
 {
     if (argc != 2) {
@@ -471,13 +470,13 @@ static void cmd_timeout(int argc, char **argv)
     }
 
     if (!strcmp(argv[1], "off")) {
-        console_timeout_enabled = false;
-        console_puts("TIMEOUT DISABLED\n");
+       console_suspend_timeout();
+       console_puts("TIMEOUT DISABLED\n");
         return;
     }
 
     if (!strcmp(argv[1], "on")) {
-        console_timeout_enabled = true;
+        console_resume_timeout();
         console_puts("TIMEOUT ENABLED\n");
         return;
     }

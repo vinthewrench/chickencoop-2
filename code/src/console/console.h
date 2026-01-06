@@ -17,15 +17,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#ifdef HOST_BUILD
-static const uint32_t CONFIG_TIMEOUT_SEC = 60;
-#else
-static const uint32_t CONFIG_TIMEOUT_SEC = 300;
-#endif
-
 extern bool want_exit;
-extern bool console_timeout_enabled;
 
 void console_init(void);
 void console_poll(void);
+
 bool console_should_exit(void);
+
+void console_suspend_timeout(void);
+void console_resume_timeout(void);

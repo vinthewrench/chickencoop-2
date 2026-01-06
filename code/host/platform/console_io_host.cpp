@@ -30,35 +30,58 @@
 #include <sys/select.h>
 #include <stdbool.h>
 
-static bool g_console_timeout_enabled = true;
+// console_io_host.cpp
+
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <termios.h>
+
+static bool g_console_inited = false;
+static struct termios g_orig_termios;
+
+void console_terminal_init(void)
+{
+    if (g_console_inited)
+        return;
+
+    g_console_inited = true;
+
+    /* make stdin non-blocking */
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    /* optional but strongly recommended */
+    if (isatty(STDIN_FILENO)) {
+        struct termios t;
+        tcgetattr(STDIN_FILENO, &g_orig_termios);
+        t = g_orig_termios;
+
+        t.c_lflag &= ~(ICANON | ECHO);
+        t.c_cc[VMIN]  = 0;
+        t.c_cc[VTIME] = 0;
+
+        tcsetattr(STDIN_FILENO, TCSANOW, &t);
+    }
+}
 
 int console_getc(void)
 {
-    fd_set rfds;
-
-    FD_ZERO(&rfds);
-    FD_SET(STDIN_FILENO, &rfds);
-
-    int r;
-
-    if (g_console_timeout_enabled) {
-        /* non-blocking poll */
-        struct timeval tv = { 0, 0 };
-        r = select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv);
-    } else {
-        /* block indefinitely */
-        r = select(STDIN_FILENO + 1, &rfds, NULL, NULL, NULL);
-    }
-
-    if (r <= 0)
-        return -1;
-
     unsigned char c;
-    if (read(STDIN_FILENO, &c, 1) == 1)
+    ssize_t n = read(STDIN_FILENO, &c, 1);
+
+    if (n == 1)
         return c;
 
+    if (n == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            return -1;
+    }
+
+    /* EOF or real error */
     return -1;
 }
+
 
 void console_putc(char c)
 {
@@ -69,14 +92,4 @@ void console_puts(const char *s)
 {
     while (*s)
         console_putc(*s++);
-}
-
-void console_suspend_timeout(void)
-{
-    g_console_timeout_enabled = false;
-}
-
-void console_resume_timeout(void)
-{
-    g_console_timeout_enabled = true;
 }

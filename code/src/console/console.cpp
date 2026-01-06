@@ -23,20 +23,42 @@
 #include <string.h>
 
 bool want_exit = false;
-bool console_timeout_enabled = true;
+
+#ifdef HOST_BUILD
+static const uint32_t CONFIG_TIMEOUT_SEC = 60;
+#else
+static const uint32_t CONFIG_TIMEOUT_SEC = 300;
+#endif
+
 
 #define MAX_LINE 64
 static char buf[MAX_LINE];
 static int idx;
 static uint32_t last_activity_sec;
 
+static bool console_timeout_enabled = true;
+
+
 extern void console_dispatch(int argc, char **argv);
 extern struct config g_cfg;
+
 
 bool console_should_exit(void)
 {
     return want_exit;
 }
+
+
+void console_suspend_timeout(void)
+{
+    console_timeout_enabled = false;
+}
+
+void console_resume_timeout(void)
+{
+    console_timeout_enabled = true;
+}
+
 
 void console_init(void)
 {
@@ -46,6 +68,9 @@ void console_init(void)
         first = false;
 
         mini_printf("Chicken Coop Controller %s\n", PROJECT_VERSION);
+
+
+        console_terminal_init();
 
         /* LOAD CONFIG HERE */
          bool cfg_ok = config_load(&g_cfg);
@@ -78,14 +103,14 @@ static void strip_comment(char *line)
     if (!line)
         return;
 
-    for (; *line; line++) {
+    while (*line) {
         if (*line == '#') {
             *line = '\0';
             return;
         }
+        line++;
     }
 }
-
 
 void console_poll(void)
 {
@@ -105,8 +130,11 @@ void console_poll(void)
 
     last_activity_sec = uptime_seconds();
 
+    /* Enter / Return */
     if (c == '\n' || c == '\r') {
-        buf[idx] = 0;
+        console_putc('\n');
+
+        buf[idx] = '\0';
 
         /* strip comments before tokenizing */
         strip_comment(buf);
@@ -128,16 +156,25 @@ void console_poll(void)
         return;
     }
 
+    /* Ctrl-U: kill entire line */
+    if (c == 0x15) {
+        while (idx > 0) {
+            console_puts("\b \b");
+            idx--;
+        }
+        return;
+    }
+
+    /* Backspace / Delete */
     if ((c == 0x08 || c == 0x7f) && idx > 0) {
         idx--;
         console_puts("\b \b");
         return;
     }
 
+    /* Normal character */
     if (idx < MAX_LINE - 1) {
         buf[idx++] = (char)c;
-#ifndef HOST_BUILD
         console_putc((char)c);
-#endif
     }
 }

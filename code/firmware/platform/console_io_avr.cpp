@@ -2,7 +2,7 @@
  * console_io_avr.cpp
  *
  * Project: Chicken Coop Controller
- * Purpose: Source file
+ * Purpose: Console I/O backend (AVR UART)
  *
  * Notes:
  *  - Offline system
@@ -14,6 +14,25 @@
 
 #include "console/console_io.h"
 #include "uart.h"
-int console_getc(void){ return uart_getc(); }
-void console_putc(char c){ uart_putc(c); }
-void console_puts(const char*s){ while(*s) uart_putc(*s++); }
+
+int console_getc(void)
+{
+    return uart_getc();
+}
+
+void console_putc(char c)
+{
+    uart_putc(c);
+}
+
+void console_puts(const char *s)
+{
+    while (*s)
+        uart_putc(*s++);
+}
+
+
+void console_terminal_init(void){
+// we allready call  uart_init();
+
+}
