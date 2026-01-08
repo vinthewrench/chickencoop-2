@@ -57,6 +57,8 @@ SRCS := \
 	../src/config_common.cpp \
 	../src/time_dst.cpp \
 	../src/state_reducer.cpp \
+	../src/schedule_apply.cpp \
+	../src/scheduler.cpp \
 	../src/next_event.cpp \
 	../src/config_events.cpp \
 	../src/rtc_common.cpp \
@@ -82,6 +84,7 @@ SRCS := \
 	platform/console_io_avr.cpp \
 	platform/config_eeprom.cpp \
 	platform/config_sw_avr.cpp \
+	platform/system_sleep_avr.cpp \
 	platform/rtc.cpp \
 	platform/uptime.cpp \
 	platform/uart.cpp

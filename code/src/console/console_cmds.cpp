@@ -53,6 +53,7 @@
 #include "rtc.h"
 #include "config.h"
 #include "uptime.h"
+#include "scheduler.h"
 
 #include "devices/devices.h"
 #include "devices/led_state_machine.h"
@@ -519,8 +520,6 @@ static void cmd_schedule(int argc, char **argv)
         rtc_get_time(&y, &mo, &d, &h, &m, &s);
     }
 
-  //  uint16_t now = rtc_minutes_since_midnight();
-
     /* ----- Header ----- */
     mini_printf("Today: %04d-%02d-%02d\n\n", y, mo, d);
 
@@ -642,30 +641,41 @@ static void cmd_set(int argc, char **argv)
         return;
     }
 
-    // set date YYYY-MM-DD
+    /* --------------------------------------------------
+     * set date YYYY-MM-DD
+     * Changes calendar day → solar must be recomputed
+     * -------------------------------------------------- */
     if (!strcmp(argv[1], "date") && argc == 3) {
         int yy, mm, dd;
         if (!parse_date_ymd(argv[2], &yy, &mm, &dd)) {
             console_puts("ERROR\n");
             return;
         }
+
         g_date_y = yy;
         g_date_mo = mm;
-        g_date_d = dd;
+        g_date_d  = dd;
+
         g_have_date = true;
         g_cfg_dirty = true;
+
+        /* Date change invalidates solar cache */
+        scheduler_invalidate_solar();
+
         console_puts("OK\n");
         return;
     }
 
-    // set time HH:MM[:SS]
+    /* --------------------------------------------------
+     * set time HH:MM[:SS]
+     * Time alone does NOT affect solar for the day
+     * -------------------------------------------------- */
     if (!strcmp(argv[1], "time") && argc == 3) {
         int hh = 0, mi = 0, ss = 0;
 
         if (parse_time_hms(argv[2], &hh, &mi, &ss)) {
             /* HH:MM:SS */
         } else if (parse_time_hm(argv[2], &hh, &mi)) {
-            /* HH:MM — default seconds */
             ss = 0;
         } else {
             console_puts("ERROR\n");
@@ -680,92 +690,91 @@ static void cmd_set(int argc, char **argv)
         g_time_set_uptime_s = uptime_seconds();
         g_cfg_dirty = true;
 
+        /* Time change alone does NOT invalidate solar */
         console_puts("OK\n");
         return;
     }
 
-    // set lat +/-DD.DDDD
+    /* --------------------------------------------------
+     * set lat +/-DD.DDDD
+     * -------------------------------------------------- */
     if (!strcmp(argv[1], "lat") && argc == 3) {
         float v = atof(argv[2]);
         if (v < -90.0f || v > 90.0f) {
             console_puts("ERROR\n");
             return;
         }
+
         g_cfg.latitude_e4 = (int32_t)(v * 10000.0f);
         g_cfg_dirty = true;
+
+        /* Location change invalidates solar */
+        scheduler_invalidate_solar();
+
         console_puts("OK\n");
         return;
     }
 
-    // set lon +/-DDD.DDDD
+    /* --------------------------------------------------
+     * set lon +/-DDD.DDDD
+     * -------------------------------------------------- */
     if (!strcmp(argv[1], "lon") && argc == 3) {
         float v = atof(argv[2]);
         if (v < -180.0f || v > 180.0f) {
             console_puts("ERROR\n");
             return;
         }
+
         g_cfg.longitude_e4 = (int32_t)(v * 10000.0f);
         g_cfg_dirty = true;
+
+        scheduler_invalidate_solar();
+
         console_puts("OK\n");
         return;
     }
 
-    // set tz +/-HH
+    /* --------------------------------------------------
+     * set tz +/-HH
+     * -------------------------------------------------- */
     if (!strcmp(argv[1], "tz") && argc == 3) {
         int v = atoi(argv[2]);
         if (v < -12 || v > 14) {
             console_puts("ERROR\n");
             return;
         }
+
         g_cfg.tz = v;
         g_cfg_dirty = true;
+
+        /* TZ affects solar resolution */
+        scheduler_invalidate_solar();
+
         console_puts("OK\n");
         return;
     }
 
-    // set dst on|off
+    /* --------------------------------------------------
+     * set dst on|off
+     * -------------------------------------------------- */
     if (!strcmp(argv[1], "dst") && argc == 3) {
         if (!strcmp(argv[2], "on")) {
             g_cfg.honor_dst = true;
-            g_cfg_dirty = true;
-            console_puts("OK\n");
-            return;
-        }
-        if (!strcmp(argv[2], "off")) {
+        } else if (!strcmp(argv[2], "off")) {
             g_cfg.honor_dst = false;
-            g_cfg_dirty = true;
-            console_puts("OK\n");
+        } else {
+            console_puts("ERROR\n");
             return;
         }
-        console_puts("ERROR\n");
+
+        g_cfg_dirty = true;
+
+        /* DST policy affects solar */
+        scheduler_invalidate_solar();
+
+        console_puts("OK\n");
         return;
     }
-
-    /* ---------------- door timing ---------------- */
-
-       if (!strcmp(argv[1], "door_travel_ms") && argc == 3) {
-           long v = strtol(argv[2], NULL, 10);
-           if (v < 100 || v > 60000) {   /* 0.1s .. 60s */
-               console_puts("ERROR\n");
-               return;
-           }
-           g_cfg.door_travel_ms = (uint16_t)v;
-           g_cfg_dirty = true;
-           console_puts("OK\n");
-           return;
-       }
-
-       if (!strcmp(argv[1], "lock_pulse_ms") && argc == 3) {
-           long v = strtol(argv[2], NULL, 10);
-           if (v < 50 || v > 5000) {   /* 50ms .. 5s */
-               console_puts("ERROR\n");
-               return;
-           }
-           g_cfg.lock_pulse_ms = (uint16_t)v;
-           g_cfg_dirty = true;
-           console_puts("OK\n");
-           return;
-       }
 
     console_puts("?\n");
 }
@@ -831,62 +840,65 @@ static void cmd_set(int argc, char **argv)
  }
 
 
-static void cmd_save(int argc,char **argv)
-{
-    (void)argc;
-    (void)argv;
+ static void cmd_save(int argc, char **argv)
+ {
+     (void)argc;
+     (void)argv;
 
-    ensure_cfg_loaded();
+     ensure_cfg_loaded();
 
-    if (!g_have_date || !g_have_time) {
-        console_puts("ERROR: DATE/TIME NOT SET\n");
-        return;
-    }
+     if (!g_have_date || !g_have_time) {
+         console_puts("ERROR: DATE/TIME NOT SET\n");
+         return;
+     }
 
-    // Option B: compensate for operator delay between 'set time' and 'save'.
-    uint32_t now_s = uptime_seconds();
-    uint32_t delta_s = now_s - g_time_set_uptime_s;
+     uint32_t now_s   = uptime_seconds();
+     uint32_t delta_s = now_s - g_time_set_uptime_s;
 
-    int y = g_date_y;
-    int mo = g_date_mo;
-    int d = g_date_d;
-    int h = g_time_h;
-    int m = g_time_m;
-    int s = g_time_s;
+     int y = g_date_y;
+     int mo = g_date_mo;
+     int d = g_date_d;
+     int h = g_time_h;
+     int m = g_time_m;
+     int s = g_time_s;
 
-    // Add elapsed seconds (delta_s can be large, so use division/mod).
-    uint32_t add = delta_s;
-    s += (int)(add % 60);
-    add /= 60;
-    m += (int)(add % 60);
-    add /= 60;
-    h += (int)(add % 24);
-    add /= 24;
+     /* Apply elapsed time */
+     s += (int)(delta_s % 60);
+     delta_s /= 60;
+     m += (int)(delta_s % 60);
+     delta_s /= 60;
+     h += (int)(delta_s % 24);
+     delta_s /= 24;
 
-    // Normalize seconds/minutes/hours
-    while (s >= 60) { s -= 60; m++; }
-    while (m >= 60) { m -= 60; h++; }
-    while (h >= 24) { h -= 24; add++; }
+     while (s >= 60) { s -= 60; m++; }
+     while (m >= 60) { m -= 60; h++; }
+     while (h >= 24) { h -= 24; delta_s++; }
 
-    // Advance days
-    while (add--) {
-        advance_one_day(&y, &mo, &d);
-    }
+     while (delta_s--) {
+         advance_one_day(&y, &mo, &d);
+     }
 
-    // Program RTC once on commit.
-    rtc_set_time(y, mo, d, h, m, s);
+     /* Commit RTC */
+     rtc_set_time(y, mo, d, h, m, s);
 
-    // Commit persistent configuration.
-    config_save(&g_cfg);
-    g_cfg_dirty = false;
+     /* Commit config */
+     config_save(&g_cfg);
+     g_cfg_dirty = false;
 
-    // Update shadow time to the committed instant.
-    g_date_y = y; g_date_mo = mo; g_date_d = d;
-    g_time_h = h; g_time_m = m; g_time_s = s;
-    g_time_set_uptime_s = now_s;
+     /* Update shadow */
+     g_date_y = y;
+     g_date_mo = mo;
+     g_date_d = d;
+     g_time_h = h;
+     g_time_m = m;
+     g_time_s = s;
+     g_time_set_uptime_s = now_s;
 
-    console_puts("OK\n");
-}
+     /* RTC commit changes effective solar day */
+     scheduler_invalidate_solar();
+
+     console_puts("OK\n");
+ }
 
 static void cmd_door(int argc, char **argv)
 {

@@ -42,6 +42,8 @@ SRCS := \
 	config_events.cpp \
 	next_event.cpp \
 	state_reducer.cpp \
+	schedule_apply.cpp \
+	scheduler.cpp \
 	mini_printf.cpp \
 	devices.cpp \
 	door_device.cpp \
@@ -58,6 +60,7 @@ SRCS := \
  	console_io_host.cpp \
 	config_sw_host.cpp \
 	config_host.cpp \
+	system_sleep_host.cpp \
 	rtc_host.cpp \
 	rtc_common.cpp \
 	door_led_host.cpp \

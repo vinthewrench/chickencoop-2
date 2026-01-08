@@ -89,3 +89,14 @@ void rtc_alarm_clear_flag(void);
  * Used by scheduler reducer logic.
  */
 uint16_t rtc_minutes_since_midnight(void);
+
+/* --------------------------------------------------------------------------
+ * Scheduler helpers (platform-independent)
+ * -------------------------------------------------------------------------- */
+
+/*
+ * Set an RTC alarm using minute-of-day [0..1439].
+ *
+ * Converts minute-of-day to HH:MM and arms the alarm.
+ */
+bool rtc_alarm_set_minute_of_day(uint16_t minute_of_day);

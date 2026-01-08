@@ -42,3 +42,31 @@ uint16_t rtc_minutes_since_midnight(void)
 
     return (uint16_t)(h * 60 + m);
 }
+
+/*
+ * Program RTC alarm for a minute-of-day [0..1439].
+ *
+ * This is a platform-independent helper that:
+ *  - Converts minute-of-day into HH:MM
+ *  - Clears any pending alarm flag
+ *  - Arms the RTC alarm via rtc.h
+ *
+ * Notes:
+ *  - Alarm is assumed to be for TODAY
+ *  - Minute-of-day must already be in the future
+ *  - Does NOT decide whether an alarm should be set
+ *  - Does NOT handle wrap-to-tomorrow
+ *
+ * Hardware-specific behavior is delegated to rtc_alarm_set_hm().
+ */
+bool rtc_alarm_set_minute_of_day(uint16_t minute_of_day)
+{
+    if (minute_of_day >= 1440)
+        return false;
+
+    uint8_t h = (uint8_t)(minute_of_day / 60);
+    uint8_t m = (uint8_t)(minute_of_day % 60);
+
+    rtc_alarm_clear_flag();
+    return rtc_alarm_set_hm(h, m);
+}

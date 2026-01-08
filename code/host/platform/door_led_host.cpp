@@ -45,7 +45,7 @@ void door_led_off(void)
 
     current = LED_HW_OFF;
     current_duty = 0;
-    printf("[LED] OFF\n");
+ //   printf("[LED] OFF\n");
 }
 
 void door_led_green_pwm(uint8_t duty)
@@ -56,7 +56,7 @@ void door_led_green_pwm(uint8_t duty)
     current = LED_HW_GREEN;
     current_duty = duty;
 
-    printf("[LED] GREEN duty=%u\n", duty);
+ //   printf("[LED] GREEN duty=%u\n", duty);
 }
 
 void door_led_red_pwm(uint8_t duty)
@@ -67,5 +67,5 @@ void door_led_red_pwm(uint8_t duty)
     current = LED_HW_RED;
     current_duty = duty;
 
-    printf("[LED] RED duty=%u\n", duty);
+ //   printf("[LED] RED duty=%u\n", duty);
 }

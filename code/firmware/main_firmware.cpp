@@ -4,19 +4,21 @@
  * Project: Chicken Coop Controller
  * Purpose: Firmware entry point
  *
- * Notes:
- *  - Offline system
- *  - Deterministic behavior
- *  - No network dependencies
+ * Design intent:
+ *  - Firmware executes the SAME scheduler logic as host
+ *  - Deterministic, offline, single-threaded
+ *  - No alternate execution paths
  *
- * BOOT MODES (CURRENT IMPLEMENTATION):
- * -----------------------------------
- *  - CONFIG mode (service / bring-up)
- *  - RUN mode skeleton (health indication only)
+ * Execution model:
+ *  - Scheduler runs on:
+ *      * minute boundary
+ *      * OR schedule ETag change
+ *  - Schedule application is idempotent
+ *  - Firmware sleeps between events using RTC alarm
  *
  * Hardware: Chicken Coop Controller V3.0
  *
- * Updated: 2026-01-05
+ * Updated: 2026-01-08
  */
 
 #include <stdbool.h>
@@ -24,75 +26,191 @@
 
 #include "config.h"
 #include "config_sw.h"
+
 #include "console/console.h"
-#include "platform/uart.h"
-#include "rtc.h"
+
 #include "uptime.h"
-#include "door_led.h"
+#include "rtc.h"
+#include "solar.h"
+#include "platform/uart.h"
+#include "system_sleep.h"
+
+#include "time_dst.h"
+
+#include "scheduler.h"
+#include "state_reducer.h"
+#include "schedule_apply.h"
+
 #include "devices/devices.h"
 #include "devices/led_state_machine.h"
 
 int main(void)
 {
-    /* ------------------------------------------------------------------
-     * Basic bring-up
-     * ------------------------------------------------------------------ */
+    /* ----------------------------------------------------------
+     * Bring-up
+     * ---------------------------------------------------------- */
     uptime_init();
-    rtc_init();        /* RTC present; policy handled elsewhere */
-
+    rtc_init();
     device_init();
+    scheduler_init();
 
-    /* ------------------------------------------------------------------
-     * Load persistent configuration (EEPROM, defaults on failure)
-     * ------------------------------------------------------------------ */
-    bool cfg_ok = config_load(&g_cfg);
-    (void)cfg_ok;   /* intentionally unused during bring-up */
+    (void)config_load(&g_cfg);
 
-    /* ------------------------------------------------------------------
-     * CONFIG mode handling (latched once per boot)
-     * ------------------------------------------------------------------ */
+    /* ----------------------------------------------------------
+     * CONFIG MODE (latched once per boot)
+     * ---------------------------------------------------------- */
     static bool config_consumed = false;
 
     if (config_sw_state() && !config_consumed) {
+
         config_consumed = true;
-
-        if (!rtc_time_is_set()) {
-            led_state_machine_set(LED_BLINK,LED_RED);
-        }
-
         console_init();
+
+        if (!rtc_time_is_set())
+            led_state_machine_set(LED_BLINK, LED_RED);
+
         while (!console_should_exit()) {
             console_poll();
-
-            uint32_t now_ms = uptime_millis();
-            device_tick(now_ms);
+            device_tick(uptime_millis());
         }
     }
 
-    /* ------------------------------------------------------------------
-     * RUN MODE (SKELETON ONLY)
-     * ------------------------------------------------------------------ */
-
+    /* ----------------------------------------------------------
+     * RUN MODE requires valid RTC
+     * ---------------------------------------------------------- */
     if (!rtc_time_is_set()) {
-        led_state_machine_set(LED_BLINK,LED_RED);
+        led_state_machine_set(LED_BLINK, LED_RED);
         for (;;) {
-            uint32_t now_ms = uptime_millis();
-            device_tick(now_ms);
+            device_tick(uptime_millis());
         }
     }
 
-    /* RTC valid: brief green, then idle */
-    led_state_machine_set(LED_ON,LED_GREEN);
-   uint32_t t0_ms = uptime_millis();
-    while ((uint32_t)(uptime_millis() - t0_ms) < 1000u) {
-        uint32_t now_ms = uptime_millis();
-        device_tick(now_ms);
+    /* Brief green = healthy boot */
+    led_state_machine_set(LED_ON, LED_GREEN);
+    {
+        uint32_t t0 = uptime_millis();
+        while ((uint32_t)(uptime_millis() - t0) < 1000u) {
+            device_tick(uptime_millis());
+        }
     }
+    led_state_machine_set(LED_OFF, LED_GREEN);
 
-    led_state_machine_set(LED_OFF,LED_GREEN);
+    /* ----------------------------------------------------------
+     * Scheduler loop state
+     * ---------------------------------------------------------- */
+    uint16_t last_minute = 0xFFFF;
+    uint32_t last_etag   = 0;
 
+    int last_y  = -1;
+    int last_mo = -1;
+    int last_d  = -1;
+
+    struct solar_times sol;
+    bool have_sol = false;
+
+    /* ----------------------------------------------------------
+     * MAIN RUN LOOP
+     * ---------------------------------------------------------- */
     for (;;) {
-        uint32_t now_ms = uptime_millis();
-        device_tick(now_ms);
+
+        /* Always clear latched RTC alarm (safe, idempotent) */
+        rtc_alarm_clear_flag();
+
+        /* ------------------------------------------------------
+         * Read current time
+         * ------------------------------------------------------ */
+        int y, mo, d, h, m, s;
+        rtc_get_time(&y, &mo, &d, &h, &m, &s);
+
+        uint16_t now_minute = (uint16_t)(h * 60 + m);
+        uint32_t cur_etag   = schedule_etag();
+
+        bool minute_changed = (now_minute != last_minute);
+        bool schedule_dirty = (cur_etag != last_etag);
+
+        /* ------------------------------------------------------
+         * If nothing changed, sleep until next event or interrupt
+         * ------------------------------------------------------ */
+        if (!minute_changed && !schedule_dirty) {
+            uint16_t next_min;
+            if (scheduler_next_event_minute(&next_min)) {
+                system_sleep_until(next_min);
+            } else {
+                system_sleep_until(now_minute); /* idle sleep */
+            }
+            continue;
+        }
+
+        last_minute = now_minute;
+        last_etag   = cur_etag;
+
+        /* ------------------------------------------------------
+         * Recompute solar ONCE per calendar day
+         * ------------------------------------------------------ */
+        if (y != last_y || mo != last_mo || d != last_d) {
+
+            have_sol = false;
+
+            if (g_cfg.latitude_e4 || g_cfg.longitude_e4) {
+
+                double lat = (double)g_cfg.latitude_e4  / 10000.0;
+                double lon = (double)g_cfg.longitude_e4 / 10000.0;
+
+                int tz = g_cfg.tz;
+                if (g_cfg.honor_dst && is_us_dst(y, mo, d, h))
+                    tz += 1;
+
+                have_sol = solar_compute(
+                    y, mo, d,
+                    lat,
+                    lon,
+                    (int8_t)tz,
+                    &sol
+                );
+            }
+
+            scheduler_update_day(
+                y, mo, d,
+                have_sol ? &sol : NULL,
+                have_sol
+            );
+
+            last_y  = y;
+            last_mo = mo;
+            last_d  = d;
+        }
+
+        /* ------------------------------------------------------
+         * APPLY SCHEDULE (same reducer + executor as host)
+         * ------------------------------------------------------ */
+        {
+            struct reduced_state rs;
+
+            size_t used = 0;
+            const Event *events = config_events_get(&used);
+
+            if (events && used > 0) {
+                state_reducer_run(
+                    events,
+                    MAX_EVENTS,
+                    have_sol ? &sol : NULL,
+                    now_minute,
+                    &rs
+                );
+
+                schedule_apply(&rs);
+            }
+        }
+
+        /* ------------------------------------------------------
+         * Program next wake
+         * ------------------------------------------------------ */
+        uint16_t next_min;
+        if (scheduler_next_event_minute(&next_min)) {
+            rtc_alarm_set_minute_of_day(next_min);
+            system_sleep_until(next_min);
+        } else {
+            system_sleep_until(now_minute);
+        }
     }
 }
