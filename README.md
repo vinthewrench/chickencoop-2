@@ -21,7 +21,6 @@ Firmware and host code must conform to the shipped hardware.
 ## Repository Layout
 
 ```
-.
 ├── Makefile
 │   # Top-level build orchestrator
 │   # Invokes host/ and firmware/ builds
@@ -35,71 +34,71 @@ Firmware and host code must conform to the shipped hardware.
 ├── firmware/
 │   # AVR firmware for Chicken Coop Controller V3.0 (avr-g++)
 │   ├── Makefile
+│   │   # Firmware build rules
 │   ├── main_firmware.cpp
-│   │   # Firmware entry point
-│   │   # Deterministic, offline firmware for Hardware V3.0
-│   │
-│   ├── uart.cpp
-│   │   # UART service (console/debug)
-│   │
-│   ├── rtc.cpp
-│   │   # RTC service (PCF8523-backed)
-│   │
-│   ├── uptime.cpp
-│   │   # System uptime service
-│   │
+│   │   # Firmware entry point (CONFIG + RUN)
+│   │   # Shares scheduler/reducer/apply logic with host
 │   └── platform/
 │       # Board-specific AVR implementation (Hardware V3.0)
 │       ├── config_eeprom.cpp
-│       │   # Persistent configuration storage
+│       │   # Persistent configuration storage (EEPROM)
 │       ├── config_sw_avr.cpp
-│       │   # Hardware config switch handling
+│       │   # Hardware CONFIG switch handling
 │       ├── console_io_avr.cpp
-│       │   # AVR-side console I/O
+│       │   # AVR-side console I/O glue
 │       ├── door_avr.cpp
 │       │   # Door motor control (real hardware)
-│       ├── lock_avr.cpp
-│       │   # Lock motor control (real hardware)
+│       ├── door_led_avr.cpp
+│       │   # Door LED driver (real hardware)
+│       ├── door_lock_avr.cpp
+│       │   # Lock actuator control (real hardware)
 │       ├── relays_avr.cpp
-│       │   # Relay pulse drivers
-│       └── i2c_avr.cpp
-│           # I2C implementation (RTC, peripherals)
+│       │   # Relay pulse drivers (real hardware)
+│       ├── rtc.cpp
+│       │   # RTC implementation for PCF8523 (I2C)
+│       ├── system_sleep_avr.cpp
+│       │   # Low-power sleep implementation (AVR)
+│       ├── uart.cpp
+│       │   # UART service (console/debug)
+│       ├── uart.h
+│       ├── uptime.cpp
+│       │   # System uptime service (AVR)
+│       ├── i2c_avr.cpp
+│       │   # I2C implementation (RTC, peripherals)
+│       └── i2c.h
 │
 ├── host/
-│   # Desktop host simulator and test console (clang++)
+│   # Desktop host build and test console (clang++)
 │   ├── Makefile
 │   ├── main_host.cpp
-│   │   # Host simulator entry point
-│   │
+│   │   # Host entry point (interactive console + scheduler loop)
 │   └── platform/
-│       # Host-side hardware simulation and glue
+│       # Host-side implementations (no real hardware)
 │       ├── config_host.cpp
 │       ├── config_sw_host.cpp
 │       ├── console_io_host.cpp
 │       ├── door_hw_host.cpp
-│       ├── door_host.cpp
+│       ├── door_led_host.cpp
 │       ├── lock_hw_host.cpp
-│       ├── lock_host.cpp
+│       ├── relays_host.cpp
 │       ├── rtc_host.cpp
-│       ├── uptime_host.cpp
-│       └── relay_host.cpp
+│       ├── system_sleep_host.cpp
+│       └── uptime_host.cpp
 │
 └── src/
     # Shared, platform-independent logic
-    # No main(), no generated files, no hardware assumptions
+    # No main(), no generated files, minimal platform assumptions
     ├── config.h
     ├── config_common.cpp
+    ├── config_events.cpp
+    ├── config_events.h
     ├── config_sw.h
     │
-    ├── door.h
-    ├── door.cpp
-    │   # Shared door logic (used by host + firmware)
-    ├── door_hw.h
-    │
-    ├── lock.h
-    ├── lock.cpp
-    │   # Shared lock logic (used by host + firmware)
-    ├── lock_hw.h
+    ├── events.h
+    ├── resolve_when.cpp
+    ├── resolve_when.h
+    ├── next_event.cpp
+    ├── next_event.h
     │
     ├── rtc.h
     ├── rtc_common.cpp
@@ -110,18 +109,21 @@ Firmware and host code must conform to the shipped hardware.
     ├── time_dst.cpp
     ├── time_dst.h
     │
-    ├── uart.h
     ├── uptime.h
     │
     ├── scheduler.cpp
     ├── scheduler.h
-    ├── scheduler_reconcile.cpp
-    ├── scheduler_reconcile.h
-    ├── next_event.cpp
-    ├── next_event.h
-    ├── events.h
+    ├── state_reducer.cpp
+    ├── state_reducer.h
+    ├── schedule_apply.cpp
+    ├── schedule_apply.h
     │
-    ├── relay.h
+    ├── system_sleep.h
+    │
+    ├── door_hw.h
+    ├── door_led.h
+    ├── lock_hw.h
+    ├── relay_hw.h
     │
     ├── console/
     │   # Shared console implementation
@@ -131,16 +133,25 @@ Firmware and host code must conform to the shipped hardware.
     │   ├── console_time.cpp
     │   ├── console_time.h
     │   ├── console_io.h
-    │   └── mini_printf.cpp
-    │       └── mini_printf.h
+    │   ├── mini_printf.cpp
+    │   └── mini_printf.h
     │
     └── devices/
-        # Abstract device model layer
+        # Abstract device model layer + state machines
         ├── device.h
-        ├── devices.h
+        ├── device_ids.h
         ├── devices.cpp
+        ├── devices.h
         ├── door_device.cpp
+        ├── door_state_machine.cpp
+        ├── door_state_machine.h
+        ├── lock_device.cpp
+        ├── lock_state_machine.cpp
+        ├── lock_state_machine.h
         ├── relay_device.cpp
+        ├── led_device.cpp
+        ├── led_state_machine.cpp
+        ├── led_state_machine.h
         └── foo_device.cpp
 ```
 
@@ -335,4 +346,3 @@ If this completes without errors, the build system is stable.
 - No clever build magic
 - If something breaks, it’s real code, not glue
 
-This document is the **authoritative reference** for building, testing, and flashing the Chicken Coop Controller.
