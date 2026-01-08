@@ -42,6 +42,7 @@ static void led_tick(uint32_t now_ms)
 
 Device led_device = {
     .name       = "led",
+    .deviceID     = DEVICE_ID_LED,
     .init      = led_init,
     .get_state = led_get_state,
     .set_state  = NULL,

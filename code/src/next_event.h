@@ -1,17 +1,16 @@
-/*
+/* ============================================================================
  * next_event.h
  *
  * Project: Chicken Coop Controller
- * Purpose: Determine the next scheduled event for today
+ * Purpose: Determine the next scheduled event for today (or tomorrow wrap)
  *
  * Notes:
  *  - Pure scheduling logic
- *  - No I/O
- *  - No globals
- *  - No device knowledge
+ *  - No I/O, no globals, no device knowledge
+ *  - Input event table is SPARSE: slots are valid iff refnum != 0
  *
- * Updated: 2025-12-31
- */
+ * Updated: 2026-01-08
+ * ========================================================================== */
 
 #pragma once
 
@@ -26,17 +25,21 @@
  * Find the next event occurring after now_minute.
  *
  * Parameters:
- *  events        - event table
- *  count         - number of events
+ *  events        - pointer to a sparse event table
+ *  count         - number of used slots (informational only, may be 0)
  *  sol           - solar times for today (may be NULL)
  *  now_minute    - current minute-of-day (0..1439)
- *  out_index     - index into events[] of next event
+ *  out_index     - slot index into events[] for the next event (0..MAX_EVENTS-1)
  *  out_minute    - resolved minute-of-day of next event
- *  out_tomorrow  - set true if wrapped to tomorrow
+ *  out_tomorrow  - true if wrapped to tomorrow
  *
  * Returns:
  *  true  if an event was found
- *  false if no events exist
+ *  false if no usable events exist
+ *
+ * IMPORTANT:
+ *  - Implementations must scan the full table width (MAX_EVENTS) and
+ *    skip unused slots (refnum == 0). Do NOT use `count` as a loop bound.
  */
 bool next_event_today(const Event *events,
                       size_t count,

@@ -4,109 +4,158 @@
  * Project: Chicken Coop Controller
  * Purpose: Device registry implementation
  *
- * Updated: 2026-01-01
+ * Updated: 2026-01-08
  */
 
 #include "devices.h"
+
+#include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 
-/* Provided by device implementation units */
+/* --------------------------------------------------------------------------
+ * Device implementations (provided elsewhere)
+ * -------------------------------------------------------------------------- */
+
 extern const Device door_device;
-extern const Device foo_device;
+extern const Device lock_device;
+extern const Device led_device;
 extern const Device relay1_device;
 extern const Device relay2_device;
-extern const Device led_device;
-extern const Device lock_device;
+extern const Device foo_device;
 
+/* --------------------------------------------------------------------------
+ * Registry table (sparse, explicit IDs)
+ * -------------------------------------------------------------------------- */
 
-/* Registry table */
-const Device *devices[] = {
-    &door_device,       /* ID 0 */
-    &lock_device,        /* ID 1 */
-    &relay1_device,     /* ID 2*/
-    &relay2_device,     /* ID 3*/
-    &led_device,        /* ID 4*/
-    &foo_device,        /* ID ? */
- };
+static const Device *devices[DEVICE_ID_TABLE_SIZE];
 
-const size_t max_devices =
-    sizeof(devices) / sizeof(devices[0]);
+/* --------------------------------------------------------------------------
+ * Initialization
+ * -------------------------------------------------------------------------- */
 
-size_t device_count() {
-    return max_devices;
-}
-
-
-bool device_id(size_t deviceNum, uint8_t *out_id){
-
-    if (deviceNum >= max_devices)
-        return false;
-
-    if(out_id) *out_id = (uint8_t) deviceNum;
-
-    return true;
-}
-
-
-
-const Device *device_by_id(uint8_t id)
+void device_init(void)
 {
-    if (id >= max_devices)
-        return NULL;
-    return devices[id];
-}
-
-/*
- * Look up a device by name.
- *
- * Returns:
- *  - 1 if the device is found (success), and *out_id is set
- *  - 0 if not found or on invalid arguments
- */
-
-bool device_lookup_id(const char *name, uint8_t *out_id)
-{
-    if (!name || !out_id)
-        return 0;
-
-    for (size_t i = 0; i < max_devices; i++) {
-        if (strcmp(devices[i]->name, name) == 0) {
-            if(out_id)  *out_id = (uint8_t)i;
-            return true;
-        }
+    /* Clear registry */
+    for (size_t i = 0; i < DEVICE_ID_TABLE_SIZE; i++) {
+        devices[i] = NULL;
     }
-    return false;
-}
 
-void device_tick(uint32_t now_ms)
-{
-    for (size_t i = 0; i < max_devices; i++) {
+    /* Register devices by explicit ID */
+    devices[DEVICE_ID_DOOR]   = &door_device;
+    devices[DEVICE_ID_LOCK]   = &lock_device;
+    devices[DEVICE_ID_LED]    = &led_device;
+    devices[DEVICE_ID_RELAY1] = &relay1_device;
+    devices[DEVICE_ID_RELAY2] = &relay2_device;
+    devices[DEVICE_ID_FOO]    = &foo_device;
+
+    /* Initialize registered devices only */
+    for (size_t i = 0; i < DEVICE_ID_TABLE_SIZE; i++) {
         const Device *dev = devices[i];
-
-        if (dev->tick)
-            dev->tick(now_ms);
-    }
-}
-
-
-void device_init()
-{
-    for (size_t i = 0; i < max_devices; i++) {
-        const Device *dev = devices[i];
+        if (!dev)
+            continue;
 
         if (dev->init)
             dev->init();
     }
 }
 
+/* --------------------------------------------------------------------------
+ * Internal helper
+ * -------------------------------------------------------------------------- */
+
+static const Device *device_by_id(uint8_t id)
+{
+    if (id >= DEVICE_ID_TABLE_SIZE)
+        return NULL;
+
+    return devices[id];
+}
+
+/* --------------------------------------------------------------------------
+ * Enumeration
+ * -------------------------------------------------------------------------- */
+
+bool device_enum_first(uint8_t *out_id)
+{
+    if (!out_id)
+        return false;
+
+    for (uint8_t id = 0; id < DEVICE_ID_TABLE_SIZE; id++) {
+        if (devices[id]) {
+            *out_id = id;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool device_enum_next(uint8_t cur_id, uint8_t *out_id)
+{
+    if (!out_id)
+        return false;
+
+    if (cur_id >= DEVICE_ID_TABLE_SIZE - 1)
+        return false;
+
+    for (uint8_t id = cur_id + 1; id < DEVICE_ID_TABLE_SIZE; id++) {
+        if (devices[id]) {
+            *out_id = id;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* --------------------------------------------------------------------------
+ * Lookup
+ * -------------------------------------------------------------------------- */
+
+bool device_lookup_id(const char *name, uint8_t *out_id)
+{
+    if (!name || !out_id)
+        return false;
+
+    for (uint8_t id = 0; id < DEVICE_ID_TABLE_SIZE; id++) {
+        const Device *dev = devices[id];
+        if (!dev || !dev->name)
+            continue;
+
+        if (strcmp(dev->name, name) == 0) {
+            *out_id = id;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* --------------------------------------------------------------------------
+ * Periodic service
+ * -------------------------------------------------------------------------- */
+
+void device_tick(uint32_t now_ms)
+{
+    for (size_t i = 0; i < DEVICE_ID_TABLE_SIZE; i++) {
+        const Device *dev = devices[i];
+        if (!dev)
+            continue;
+
+        if (dev->tick)
+            dev->tick(now_ms);
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * State access
+ * -------------------------------------------------------------------------- */
 
 bool device_set_state_by_id(uint8_t id, dev_state_t state)
 {
     const Device *dev = device_by_id(id);
-    if (!dev)
-        return false;
-
-    if (!dev->set_state)
+    if (!dev || !dev->set_state)
         return false;
 
     dev->set_state(state);
@@ -119,49 +168,49 @@ bool device_get_state_by_id(uint8_t id, dev_state_t *out_state)
         return false;
 
     const Device *dev = device_by_id(id);
-    if (!dev || !dev->get_state)
+    if (!dev)
         return false;
+
+    if (!dev->get_state) {
+        *out_state = DEV_STATE_UNKNOWN;
+        return true;
+    }
 
     *out_state = dev->get_state();
     return true;
 }
 
-
-bool device_get_state_string(uint8_t id, dev_state_t state, const char**state_string){
-
-    const Device *dev = device_by_id(id);
-    if (!dev || !dev->get_state)
+bool device_get_state_string(uint8_t id,
+                             dev_state_t state,
+                             const char **out_string)
+{
+    if (!out_string)
         return false;
 
-    if(state_string)
-        *state_string = dev->state_string(state);
+    const Device *dev = device_by_id(id);
+    if (!dev || !dev->state_string)
+        return false;
 
+    *out_string = dev->state_string(state);
+    return (*out_string != NULL);
+}
+
+bool device_name(uint8_t id, const char **out_name)
+{
+    if (!out_name)
+        return false;
+
+    const Device *dev = device_by_id(id);
+    if (!dev || !dev->name)
+        return false;
+
+    *out_name = dev->name;
     return true;
 }
 
-
-bool device_name(uint8_t id, const char**device_name){
-
-    const Device *dev = device_by_id(id);
-    if (!dev)
-        return false;
-
-    if(device_name)
-        *device_name = dev->name;
-
-    return true;
-}
-
-
-
-/*
- * Parse a device state from user input.
- *
- * Rules:
- *  - Prefer device-defined state_string()
- *  - Case-insensitive match
- *  - Fallback to "on"/"off"
- */
+/* --------------------------------------------------------------------------
+ * State parsing
+ * -------------------------------------------------------------------------- */
 
 bool device_parse_state_by_id(uint8_t id,
                               const char *arg,

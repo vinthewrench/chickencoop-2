@@ -1,6 +1,8 @@
 #include "rtc.h"
 
 #include <time.h>
+#include <string.h>
+#include <stdbool.h>
 
 /*
  * Host RTC stub
@@ -13,20 +15,16 @@
 static bool g_rtc_valid  = true;
 static bool g_rtc_manual = false;
 
-static int g_year;
-static int g_month;
-static int g_day;
-static int g_hour;
-static int g_minute;
-static int g_second;
-
+static int g_year   = 0;
+static int g_month  = 0;
+static int g_day    = 0;
+static int g_hour   = 0;
+static int g_minute = 0;
+static int g_second = 0;
 
 /*
  * Host-side RTC initialization stub.
- *
  * No hardware exists in the host build.
- * This function exists solely to satisfy the
- * shared RTC interface contract.
  */
 void rtc_init(void)
 {
@@ -38,11 +36,15 @@ static void rtc_sync_from_host(void)
 {
     time_t now = time(NULL);
     struct tm lt;
+    memset(&lt, 0, sizeof(lt));
 
 #if defined(_POSIX_THREAD_SAFE_FUNCTIONS)
     localtime_r(&now, &lt);
 #else
-    lt = *localtime(&now);
+    struct tm *tmp = localtime(&now);
+    if (!tmp)
+        return;
+    lt = *tmp;
 #endif
 
     g_year   = lt.tm_year + 1900;
@@ -53,9 +55,17 @@ static void rtc_sync_from_host(void)
     g_second = lt.tm_sec;
 }
 
-void rtc_get_time(int *year,int *month,int *day,
-                  int *hour,int *minute,int *second)
+void rtc_get_time(int *year,
+                  int *month,
+                  int *day,
+                  int *hour,
+                  int *minute,
+                  int *second)
 {
+    /* Caller bug protection */
+    if (!year || !month || !day || !hour || !minute || !second)
+        return;
+
     if (!g_rtc_manual)
         rtc_sync_from_host();
 

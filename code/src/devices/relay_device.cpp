@@ -74,6 +74,7 @@ static void relay_device_init(void)
 
 Device relay1_device = {
     .name = "relay1",
+    .deviceID     = DEVICE_ID_RELAY1,
     .init = relay_device_init,
     .get_state = relay1_get_state,
     .set_state = relay1_set_state,
@@ -84,7 +85,8 @@ Device relay1_device = {
 
 Device relay2_device = {
     .name = "relay2",
-    .init = relay_device_init,
+    .deviceID     = DEVICE_ID_RELAY2,
+     .init = relay_device_init,
     .get_state = relay2_get_state,
     .set_state = relay2_set_state,
     .state_string = relay_state_string,

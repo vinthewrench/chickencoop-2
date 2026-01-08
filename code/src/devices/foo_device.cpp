@@ -55,6 +55,7 @@ static void foo_device_init(void)
 
 Device foo_device = {
     .name = "foo",
+    .deviceID     = DEVICE_ID_FOO,
     .init = foo_device_init,
     .get_state = foo_get_state,
     .set_state = foo_set_state,

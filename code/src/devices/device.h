@@ -15,6 +15,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "device_ids.h"
 
 /* Device-visible state */
 typedef enum {
@@ -25,7 +26,8 @@ typedef enum {
 
 /* Generic device vtable */
 typedef struct {
-    const char *name;
+    const       char *name;
+    uint8_t     deviceID;
     void        (*init)(void);
     dev_state_t (*get_state)(void);
     void        (*set_state)(dev_state_t state);

@@ -59,6 +59,7 @@ static void door_tick(uint32_t now_ms)
 
 Device door_device = {
     .name         = "door",
+    .deviceID     = DEVICE_ID_DOOR,
     .init         = door_init,
     .get_state    = door_get_state,
     .set_state    = door_set_state,

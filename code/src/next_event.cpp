@@ -1,4 +1,4 @@
-/*
+/* ============================================================================
  * next_event.cpp
  *
  * Project: Chicken Coop Controller
@@ -9,12 +9,14 @@
  *  - No I/O
  *  - No globals
  *  - No device knowledge
+ *  - Event table is SPARSE: skip entries with refnum == 0
  *
- * Updated: 2025-12-31
- */
+ * Updated: 2026-01-08
+ * ========================================================================== */
 
 #include "next_event.h"
 #include "resolve_when.h"
+#include "config_events.h"   /* MAX_EVENTS */
 
 bool next_event_today(const Event *events,
                       size_t count,
@@ -24,8 +26,9 @@ bool next_event_today(const Event *events,
                       uint16_t *out_minute,
                       bool *out_tomorrow)
 {
-    if (!events || count == 0 ||
-        !out_index || !out_minute || !out_tomorrow)
+    (void)count; /* informational only */
+
+    if (!events || !out_index || !out_minute || !out_tomorrow)
         return false;
 
     bool found = false;
@@ -35,7 +38,10 @@ bool next_event_today(const Event *events,
     /* ------------------------------------------------------------
      * First pass: today (strictly after now)
      * ------------------------------------------------------------ */
-    for (size_t i = 0; i < count; i++) {
+    for (size_t i = 0; i < MAX_EVENTS; i++) {
+        if (events[i].refnum == 0)
+            continue;
+
         uint16_t minute;
         if (!resolve_when(&events[i].when, sol, &minute))
             continue;
@@ -43,7 +49,8 @@ bool next_event_today(const Event *events,
         if (minute <= now_minute)
             continue;
 
-        if (!found || minute < best_minute) {
+        if (!found || minute < best_minute ||
+            (minute == best_minute && i < best_index)) {
             found = true;
             best_minute = minute;
             best_index = i;
@@ -58,18 +65,22 @@ bool next_event_today(const Event *events,
     }
 
     /* ------------------------------------------------------------
-     * Second pass: tomorrow (wrap)
+     * Second pass: tomorrow (wrap to earliest valid event)
      * ------------------------------------------------------------ */
     found = false;
     best_minute = 0;
     best_index = 0;
 
-    for (size_t i = 0; i < count; i++) {
+    for (size_t i = 0; i < MAX_EVENTS; i++) {
+        if (events[i].refnum == 0)
+            continue;
+
         uint16_t minute;
         if (!resolve_when(&events[i].when, sol, &minute))
             continue;
 
-        if (!found || minute < best_minute) {
+        if (!found || minute < best_minute ||
+            (minute == best_minute && i < best_index)) {
             found = true;
             best_minute = minute;
             best_index = i;

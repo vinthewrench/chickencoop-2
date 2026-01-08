@@ -1,4 +1,4 @@
-/*
+/* ============================================================================
  * events.h
  *
  * Project: Chicken Coop Controller
@@ -11,13 +11,14 @@
  *  - Expected state is derived from events, not history
  *
  * Notes:
- *  - All times are minute-of-day (0..1439)
- *  - Invalid or out-of-range times are discarded, never wrapped
+ *  - All resolved times are minute-of-day (0..1439)
+ *  - Invalid or out-of-range resolves are discarded, never wrapped
  *
- * Updated: 2025-12-29
- */
+ * Updated: 2026-01-08
+ * ========================================================================== */
 
 #pragma once
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -45,18 +46,25 @@ enum Action : uint8_t {
     ACTION_ON  = 1
 };
 
-/* Declarative scheduling event */
+/*
+ * Declarative scheduling event.
+ *
+ * device_id:
+ *  - Opaque device identifier stored in config
+ *  - Must match a registered device ID at runtime
+ *  - No assumption that IDs are contiguous
+ */
 struct Event {
-    uint8_t device_id;   /* DEVICE_* identifier */
-    enum Action action;  /* Expected action */
-    struct When when;    /* Time expression */
-    refnum_t refnum;     /* Rule identifier */
+    uint8_t     device_id;
+    enum Action action;
+    struct When when;
+    refnum_t    refnum;     /* non-zero == used slot, also stable identity */
 };
 
-/* Fully-resolved event for today */
+/* Fully-resolved event for a specific day (non-persistent) */
 struct ResolvedEvent {
-    uint8_t device_id;
+    uint8_t     device_id;
     enum Action action;
-    refnum_t refnum;
-    uint16_t minute;     /* 0..1439 */
+    refnum_t    refnum;
+    uint16_t    minute;     /* 0..1439 */
 };

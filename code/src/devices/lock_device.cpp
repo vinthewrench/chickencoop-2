@@ -58,6 +58,7 @@ static void lock_tick(uint32_t now_ms)
 
 Device lock_device = {
     .name         = "lock",
+    .deviceID     = DEVICE_ID_LOCK,
     .init         = lock_init,
     .get_state    = lock_get_state , //lock_get_state,
     .set_state    = lock_set_state,

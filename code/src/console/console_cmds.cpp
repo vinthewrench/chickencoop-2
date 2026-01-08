@@ -34,6 +34,10 @@
  * Updated: 2025-12-31
  */
 
+ #include <string.h>
+ #include <stdlib.h>
+ #include <ctype.h>
+
 
 #include "console/console_io.h"
 #include "console/console.h"
@@ -52,10 +56,7 @@
 
 #include "devices/devices.h"
 #include "devices/led_state_machine.h"
-
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
+#include "state_reducer.h"
 
 extern bool want_exit;
 
@@ -89,11 +90,13 @@ static void cmd_door(int argc, char **argv);
 static void cmd_lock(int argc, char **argv);
 static void cmd_run(int argc, char **argv);
 static void cmd_event(int argc, char **argv);
-static void cmd_next(int argc, char **argv);
 
 #ifdef HOST_BUILD
+static void cmd_next(int argc, char **argv);
+static void cmd_reduce(int argc, char **argv);
 static void cmd_sleep(int argc, char **argv);
 #endif
+
 // -----------------------------------------------------------------------------
 // Small helpers
 // -----------------------------------------------------------------------------
@@ -223,6 +226,34 @@ static bool parse_time_hms(const char *s,int *h,int *m,int *sec)
     return true;
 }
 
+static void print_uint_padded(unsigned v, size_t width)
+{
+    mini_printf("%u", v);
+
+    /* count digits */
+    unsigned n = 1;
+    unsigned t = v;
+    while (t >= 10) {
+        t /= 10;
+        n++;
+    }
+
+    while (n++ < width)
+        console_putc(' ');
+}
+
+static void print_padded(const char *s, size_t width)
+{
+    if (!s)
+        s = "?";
+
+    size_t n = strlen(s);
+    console_puts(s);
+
+    while (n++ < width)
+        console_putc(' ');
+}
+
 
 static void when_print(const struct When *w)
 {
@@ -231,6 +262,10 @@ static void when_print(const struct When *w)
         return;
     }
 
+    int off = w->offset_minutes;
+    char sign = (off < 0) ? '-' : '+';
+    int mins = abs(off);
+
     switch (w->ref) {
 
     case REF_NONE:
@@ -238,34 +273,26 @@ static void when_print(const struct When *w)
         return;
 
     case REF_MIDNIGHT: {
-        int h = w->offset_minutes / 60;
-        int m = abs(w->offset_minutes % 60);
+        int h = off / 60;
+        int m = abs(off % 60);
         mini_printf("%02d:%02d", h, m);
         return;
     }
 
     case REF_SOLAR_STD_RISE:
-        mini_printf("SOLAR SUNRISE %c%d",
-                    (w->offset_minutes < 0) ? '-' : '+',
-                    abs(w->offset_minutes));
+        mini_printf("Solar Sunrise %c%d", sign, mins);
         return;
 
     case REF_SOLAR_STD_SET:
-        mini_printf("SOLAR SUNSET %c%d",
-                    (w->offset_minutes < 0) ? '-' : '+',
-                    abs(w->offset_minutes));
+        mini_printf("Solar Sunset %c%d", sign, mins);
         return;
 
     case REF_SOLAR_CIV_RISE:
-        mini_printf("CIVIL DAWN %c%d",
-                    (w->offset_minutes < 0) ? '-' : '+',
-                    abs(w->offset_minutes));
+        mini_printf("Civil Dawn %c%d", sign, mins);
         return;
 
     case REF_SOLAR_CIV_SET:
-        mini_printf("CIVIL DUSK %c%d",
-                    (w->offset_minutes < 0) ? '-' : '+',
-                    abs(w->offset_minutes));
+        mini_printf("Civil Dusk %c%d", sign, mins);
         return;
 
     default:
@@ -273,6 +300,8 @@ static void when_print(const struct When *w)
         return;
     }
 }
+
+
 
 static bool parse_signed_int(const char *s, int *out)
 {
@@ -316,20 +345,6 @@ static bool compute_today_solar(struct solar_times *out)
         out
     );
 }
-
-// -----------------------------------------------------------------------------
-// Enum-to-string helpers
-// -----------------------------------------------------------------------------
-
-static const char *action_name(enum Action a)
-{
-    switch (a) {
-    case ACTION_ON:  return "on";
-    case ACTION_OFF: return "off";
-    default:         return "?";
-    }
-}
-
 
 // -----------------------------------------------------------------------------
 // Commands
@@ -487,51 +502,133 @@ static void cmd_schedule(int argc, char **argv)
 
     ensure_cfg_loaded();
 
+    /* ----- Date / time ----- */
     int y, mo, d, h, m, s;
-    int ry, rmo, rd;   /* throwaway date from RTC */
+
+    if (!rtc_time_is_set()) {
+        console_puts("TIME: NOT SET\n");
+        return;
+    }
 
     if (g_have_date) {
-        /* Console shadow date is authoritative */
         y  = g_date_y;
         mo = g_date_mo;
         d  = g_date_d;
-
-        if (!rtc_time_is_set()) {
-            console_puts("TIME: NOT SET\n");
-            return;
-        }
-
-        /* rtc_get_time requires non-NULL pointers */
-        rtc_get_time(&ry, &rmo, &rd, &h, &m, &s);
+        rtc_get_time(NULL, NULL, NULL, &h, &m, &s);
     } else {
-        if (!rtc_time_is_set()) {
-            console_puts("TIME: NOT SET\n");
-            return;
-        }
         rtc_get_time(&y, &mo, &d, &h, &m, &s);
     }
 
-    int effective_tz = g_cfg.tz;
-    struct solar_times sol;
+  //  uint16_t now = rtc_minutes_since_midnight();
 
-    /* Match cmd_solar() DST handling */
-    if (g_cfg.honor_dst && is_us_dst(y, mo, d, 12)) {
-        effective_tz += 1;
+    /* ----- Header ----- */
+    mini_printf("Today: %04d-%02d-%02d\n\n", y, mo, d);
+
+    mini_printf("lat/long  : %L, %L\n",
+                g_cfg.latitude_e4,
+                g_cfg.longitude_e4);
+
+     mini_printf("TZ        : %d (DST %s)\n\n",
+        g_cfg.tz,
+        g_cfg.honor_dst ? "ON" : "OFF");
+
+    /* ----- Solar ----- */
+    struct solar_times sol;
+    bool have_sol = compute_today_solar(&sol);
+
+    if (have_sol) {
+        console_puts("Solar      Rise        Set\n");
+        console_puts("Actual     ");
+        print_hhmm(sol.sunrise_std);
+        console_puts("    ");
+        print_hhmm(sol.sunset_std);
+        console_putc('\n');
+
+        console_puts("Civil      ");
+        print_hhmm(sol.sunrise_civ);
+        console_puts("    ");
+        print_hhmm(sol.sunset_civ);
+        console_putc('\n');
+    } else {
+        console_puts("Solar: UNAVAILABLE\n");
     }
 
-    float lat = g_cfg.latitude_e4 * 1e-4f;
-    float lon = g_cfg.longitude_e4 * 1e-4f;
+    console_putc('\n');
+    console_puts("Events:\n");
 
-    if (!solar_compute(y, mo, d,
-                       lat,
-                       lon,
-                       effective_tz,
-                       &sol)) {
-        console_puts("SOLAR: UNAVAILABLE\n");
+    /* ----- Events ----- */
+    size_t used = 0;
+    const Event *events = config_events_get(&used);
+
+    if (used == 0) {
+        console_puts("(no events)\n");
         return;
     }
-}
 
+    struct Row {
+        uint16_t minute;
+        const Event *ev;
+    };
+
+    struct Row rows[MAX_EVENTS];
+    size_t rc = 0;
+
+    for (size_t i = 0; i < MAX_EVENTS; i++) {
+        const Event *ev = &events[i];
+        if (ev->refnum == 0)
+            continue;
+
+        uint16_t minute;
+        if (!resolve_when(&ev->when, have_sol ? &sol : NULL, &minute))
+            continue;
+
+        rows[rc].minute = minute;
+        rows[rc].ev     = ev;
+        rc++;
+    }
+
+    if (rc == 0) {
+        console_puts("(no resolvable events)\n");
+        return;
+    }
+
+    /* sort by time */
+    for (size_t i = 0; i + 1 < rc; i++) {
+        for (size_t j = i + 1; j < rc; j++) {
+            if (rows[j].minute < rows[i].minute) {
+                struct Row t = rows[i];
+                rows[i] = rows[j];
+                rows[j] = t;
+            }
+        }
+    }
+
+    /* print rows */
+    for (size_t i = 0; i < rc; i++) {
+        const Event *ev = rows[i].ev;
+        uint16_t min = rows[i].minute;
+
+        const char *dev = "?";
+        const char *state = "?";
+
+        device_name(ev->device_id, &dev);
+
+        dev_state_t st =
+            (ev->action == ACTION_ON) ? DEV_STATE_ON : DEV_STATE_OFF;
+
+        device_get_state_string(ev->device_id, st, &state);
+
+        mini_printf("%02u:%02u  ",
+            (unsigned)(min / 60),
+            (unsigned)(min % 60));
+
+        print_padded(dev,   8);
+        print_padded(state, 8);
+
+        when_print(&ev->when);
+        console_putc('\n');
+    }
+}
 
 
 // src/console/console_cmds.cpp
@@ -677,37 +774,31 @@ static void cmd_set(int argc, char **argv)
  {
      /* device */
      if (argc == 1) {
-         for (size_t i = 0; i < device_count(); i++) {
-
             uint8_t id;
-            dev_state_t st = DEV_STATE_UNKNOWN;
-            const char *str = "?";
-            const char *name = "?";
 
-           if(! device_id(i, &id))
-                 continue;
+            for (bool ok = device_enum_first(&id);
+                ok;
+                ok = device_enum_next(id, &id)) {
 
-             if (!device_get_state_by_id(id,&st)) {
-                 console_puts("ERROR\n");
-                 return;
-             }
+                dev_state_t st;
+                const char *name;
+                const char *str;
 
-             if (!device_name(id,&name)) {
-                 console_puts("ERROR\n");
-                 return;
-             }
+                if (!device_get_state_by_id(id, &st))
+                    continue;
 
-             if (!device_get_state_string(id,st,&str)) {
-                 console_puts("ERROR\n");
-                 return;
-             }
+                if (!device_name(id, &name))
+                    continue;
 
+                if (!device_get_state_string(id, st, &str))
+                    continue;
 
-             console_puts(name);
-             console_puts(": ");
-             console_puts(str);
-             console_putc('\n');
-         }
+                console_puts(name);
+                console_puts(": ");
+                console_puts(str);
+                console_putc('\n');
+            }
+
          return;
      }
 
@@ -1009,85 +1100,110 @@ static void cmd_event(int argc, char **argv)
     /* --------------------------------------------------------------------
      * event list
      * ------------------------------------------------------------------ */
-     if (!strcmp(argv[1], "list") && argc == 2) {
+    if (!strcmp(argv[1], "list") && argc == 2) {
 
-         size_t count = 0;
-         const Event *events = config_events_get(&count);
+        size_t count = 0;
+        const Event *events = config_events_get(&count);
 
-         if (count == 0) {
-             console_puts("(no events)\n");
-             return;
-         }
+        if (count == 0) {
+            console_puts("(no events)\n");
+            return;
+        }
 
-         /* Compute solar times once for today */
-         struct solar_times sol;
-         bool have_sol = compute_today_solar(&sol);
+        /* Compute solar times once for today */
+        struct solar_times sol;
+        bool have_sol = compute_today_solar(&sol);
 
-         /* Resolve + collect (index is the stable ID) */
-         struct Resolved {
-             uint16_t minute;
-             uint8_t  index;
-         };
+        /* Collect resolved events (by refnum, not index) */
+        struct Resolved {
+            uint16_t minute;
+            refnum_t refnum;
+            const Event *ev;
+        };
 
-         struct Resolved r[MAX_EVENTS];
-         size_t rcount = 0;
+        struct Resolved r[MAX_EVENTS];
+        size_t rcount = 0;
 
-         for (size_t i = 0; i < count; i++) {
-             uint16_t minute;
-             if (!resolve_when(&events[i].when,
-                               have_sol ? &sol : NULL,
-                               &minute))
-                 continue;
+        /* IMPORTANT:
+         * config_events_get() returns the full sparse table.
+         * We must scan MAX_EVENTS and skip refnum == 0.
+         */
+        for (size_t i = 0; i < MAX_EVENTS; i++) {
+            const Event *ev = &events[i];
 
-             r[rcount].minute = minute;
-             r[rcount].index  = (uint8_t)i;
-             rcount++;
-         }
+            if (ev->refnum == 0)
+                continue;
 
-         if (rcount == 0) {
-             console_puts("(no events)\n");
-             return;
-         }
+            uint16_t minute;
+            if (!resolve_when(&ev->when,
+                              have_sol ? &sol : NULL,
+                              &minute))
+                continue;
 
-         /* Sort by resolved time, then index */
-         for (size_t i = 0; i + 1 < rcount; i++) {
-             for (size_t j = i + 1; j < rcount; j++) {
-                 if (r[j].minute < r[i].minute ||
-                    (r[j].minute == r[i].minute &&
-                     r[j].index < r[i].index)) {
+            r[rcount].minute = minute;
+            r[rcount].refnum = ev->refnum;
+            r[rcount].ev     = ev;
+            rcount++;
 
-                     struct Resolved tmp = r[i];
-                     r[i] = r[j];
-                     r[j] = tmp;
-                 }
-             }
-         }
+            if (rcount >= MAX_EVENTS)
+                   break;
+        }
 
-         /* Print */
-         for (size_t i = 0; i < rcount; i++) {
-             const Event *ev = &events[r[i].index];
-             uint16_t minute = r[i].minute;
+        if (rcount == 0) {
+            console_puts("(no events)\n");
+            return;
+        }
 
-             const char *name = "?";
+        /* Sort by resolved time, then refnum (stable) */
+        for (size_t i = 0; i + 1 < rcount; i++) {
+            for (size_t j = i + 1; j < rcount; j++) {
+                if (r[j].minute < r[i].minute ||
+                   (r[j].minute == r[i].minute &&
+                    r[j].refnum < r[i].refnum)) {
 
-            if (device_name(ev->device_id,&name)) {
-
-                /* Time first, index secondary */
-                mini_printf("%02u:%02u #%u ",
-                            (unsigned)(minute / 60),
-                            (unsigned)(minute % 60),
-                            (unsigned)r[i].index);
-
-                console_puts(name);
-                console_putc(' ');
-                console_puts(action_name(ev->action));
-                console_putc(' ');
-                when_print(&ev->when);
-                console_putc('\n');
+                    struct Resolved tmp = r[i];
+                    r[i] = r[j];
+                    r[j] = tmp;
+                }
             }
-         }
-         return;
-     }
+        }
+
+        /* Print */
+        /* Print */
+        for (size_t i = 0; i < rcount; i++) {
+            const Event *ev = r[i].ev;
+            uint16_t minute = r[i].minute;
+
+            const char *dev_name = "?";
+            const char *state    = "?";
+
+            device_name(ev->device_id, &dev_name);
+
+            dev_state_t st =
+                (ev->action == ACTION_ON) ? DEV_STATE_ON : DEV_STATE_OFF;
+
+            device_get_state_string(ev->device_id, st, &state);
+
+            /* Time and stable refnum */
+            mini_printf("%02u:%02u  #",
+                        (unsigned)(minute / 60),
+                        (unsigned)(minute % 60));
+
+            print_uint_padded(ev->refnum, 3);
+            console_puts("  ");
+
+            print_padded(dev_name, 8);
+            console_putc(' ');
+            print_padded(state, 7);
+            console_putc(' ');
+
+            when_print(&ev->when);
+            console_putc('\n');
+        }
+
+        return;
+    }
+
     /* --------------------------------------------------------------------
      * event clear
      * ------------------------------------------------------------------ */
@@ -1099,19 +1215,19 @@ static void cmd_event(int argc, char **argv)
     }
 
     /* --------------------------------------------------------------------
-     * event delete <index>
+     * event delete <refnum>
      * ------------------------------------------------------------------ */
     if (!strcmp(argv[1], "delete") && argc == 3) {
 
         char *end = NULL;
-        long idx = strtol(argv[2], &end, 10);
+        long ref = strtol(argv[2], &end, 10);
 
-        if (!end || *end != '\0' || idx < 0 || idx >= (long)MAX_EVENTS) {
+        if (!end || *end != '\0' || ref <= 0 || ref > 255) {
             console_puts("ERROR\n");
             return;
         }
 
-        if (!config_events_delete((uint8_t)idx)) {
+        if (!config_events_delete_by_refnum((refnum_t)ref)) {
             console_puts("ERROR\n");
             return;
         }
@@ -1129,24 +1245,29 @@ static void cmd_event(int argc, char **argv)
         Event ev;
         memset(&ev, 0, sizeof(ev));
 
-         console_puts("add\n");
-
         if (argc < 5) {
             console_puts("ERROR ARGS\n");
             return;
         }
 
         if (!device_lookup_id(argv[2], &ev.device_id)) {
-            console_puts("ERROR DEVICE NAME \n");
+            console_puts("ERROR DEVICE\n");
             return;
         }
 
-        if (!strcmp(argv[3], "on"))
+        /* Device-defined state parsing */
+        dev_state_t st;
+        if (!device_parse_state_by_id(ev.device_id, argv[3], &st)) {
+            console_puts("ERROR STATE\n");
+            return;
+        }
+
+        if (st == DEV_STATE_ON)
             ev.action = ACTION_ON;
-        else if (!strcmp(argv[3], "off"))
+        else if (st == DEV_STATE_OFF)
             ev.action = ACTION_OFF;
         else {
-            console_puts("ERROR ACTION\n");
+            console_puts("ERROR STATE\n");
             return;
         }
 
@@ -1154,7 +1275,7 @@ static void cmd_event(int argc, char **argv)
         if (argc == 5) {
             int hh, mm;
             if (!parse_time_hm(argv[4], &hh, &mm)) {
-                console_puts("ERROR2\n");
+                console_puts("ERROR TIME\n");
                 return;
             }
             ev.when.ref = REF_MIDNIGHT;
@@ -1166,7 +1287,7 @@ static void cmd_event(int argc, char **argv)
         if (argc == 6 && !strcmp(argv[4], "midnight")) {
             int hh, mm;
             if (!parse_time_hm(argv[5], &hh, &mm)) {
-                console_puts("ERROR MIDNIGHT\n");
+                console_puts("ERROR TIME\n");
                 return;
             }
             ev.when.ref = REF_MIDNIGHT;
@@ -1188,7 +1309,7 @@ static void cmd_event(int argc, char **argv)
 
             int off;
             if (!parse_signed_int(argv[6], &off)) {
-                console_puts("ERROR5\n");
+                console_puts("ERROR OFFSET\n");
                 return;
             }
 
@@ -1204,13 +1325,13 @@ static void cmd_event(int argc, char **argv)
             else if (!strcmp(argv[5], "dusk"))
                 ev.when.ref = REF_SOLAR_CIV_SET;
             else {
-                console_puts("ERROR6\n");
+                console_puts("ERROR CIVIL\n");
                 return;
             }
 
             int off;
             if (!parse_signed_int(argv[6], &off)) {
-                console_puts("ERROR7\n");
+                console_puts("ERROR OFFSET\n");
                 return;
             }
 
@@ -1218,10 +1339,11 @@ static void cmd_event(int argc, char **argv)
             goto add_event;
         }
 
-        console_puts("ERROR OTHER\n");
+        console_puts("ERROR FORMAT\n");
         return;
 
-add_event:ev.refnum = 0;
+add_event:
+        ev.refnum = 0;
 
         if (!config_events_add(&ev)) {
             console_puts("ERROR\n");
@@ -1236,6 +1358,12 @@ add_event:ev.refnum = 0;
     console_puts("?\n");
 }
 
+/* -------------------------------------------------------------------------- */
+/* Host-only scheduler diagnostics                                             */
+/* -------------------------------------------------------------------------- */
+
+#ifdef HOST_BUILD
+
 static void cmd_next(int argc, char **argv)
 {
     (void)argc;
@@ -1245,43 +1373,18 @@ static void cmd_next(int argc, char **argv)
 
     uint16_t now = rtc_minutes_since_midnight();
 
-    /* Compute today's solar times */
     struct solar_times sol;
-    bool have_sol = false;
+    bool have_sol = compute_today_solar(&sol);
 
-    double lat = (double)g_cfg.latitude_e4  / 10000.0;
-    double lon = (double)g_cfg.longitude_e4 / 10000.0;
-
-    int tz = g_cfg.tz;
-    if (g_cfg.honor_dst &&
-        is_us_dst(g_date_y, g_date_mo, g_date_d, g_time_h)) {
-        tz += 1;
-    }
-
-    have_sol = solar_compute(
-        g_date_y,
-        g_date_mo,
-        g_date_d,
-        lat,
-        lon,
-        (int8_t)tz,
-        &sol
-    );
-
-    size_t count = 0;
-    const Event *events = config_events_get(&count);
-
-    if (count == 0) {
-        console_puts("next: none\n");
-        return;
-    }
+    size_t used = 0;
+    const Event *events = config_events_get(&used);
 
     size_t idx = 0;
     uint16_t minute = 0;
     bool tomorrow = false;
 
     if (!next_event_today(events,
-                          count,
+                          MAX_EVENTS,
                           have_sol ? &sol : NULL,
                           now,
                           &idx,
@@ -1291,34 +1394,76 @@ static void cmd_next(int argc, char **argv)
         return;
     }
 
-    int32_t delta_min;
-    if (tomorrow)
-        delta_min = (1440 - now) + minute;
-    else
-        delta_min = (int32_t)minute - (int32_t)now;
+    int32_t delta =
+        tomorrow ? (1440 - now + minute) : ((int32_t)minute - now);
 
-    console_puts(tomorrow ? "next: tomorrow " : "next: ");
-
-    mini_printf("%02u:%02u (+%d min) ",
-                (unsigned)(minute / 60),
-                (unsigned)(minute % 60),
-                (int)delta_min);
+    mini_printf("next: %02u:%02u (+%ld min) ",
+                minute / 60, minute % 60, (long)delta);
 
     const Event *ev = &events[idx];
 
     const char *name = "?";
+    device_name(ev->device_id, &name);
 
-    if (device_name(ev->device_id,&name)) {
-        console_puts(name);
-        console_putc(' ');
-        console_puts(action_name(ev->action));
-        console_putc(' ');
-        when_print(&ev->when);
-        console_putc('\n');
-    }
+    console_puts(name);
+    console_putc(' ');
+    console_puts(ev->action == ACTION_ON ? "on " : "off ");
+    when_print(&ev->when);
+    console_putc('\n');
 }
 
-#ifdef HOST_BUILD
+static void cmd_reduce(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    ensure_cfg_loaded();
+
+    uint16_t now = rtc_minutes_since_midnight();
+
+    struct solar_times sol;
+    bool have_sol = compute_today_solar(&sol);
+
+    size_t used = 0;
+    const Event *events = config_events_get(&used);
+
+    struct reduced_state rs;
+    state_reducer_run(events,
+                      MAX_EVENTS,
+                      have_sol ? &sol : NULL,
+                      now,
+                      &rs);
+
+    uint8_t id;
+    bool any = false;
+
+    for (bool ok = device_enum_first(&id);
+         ok;
+         ok = device_enum_next(id, &id)) {
+
+        if (!rs.has_action[id])
+            continue;
+
+        const char *name = "?";
+        const char *state = "?";
+
+        device_name(id, &name);
+
+        dev_state_t st =
+            (rs.action[id] == ACTION_ON) ? DEV_STATE_ON : DEV_STATE_OFF;
+
+        device_get_state_string(id, st, &state);
+
+        console_puts(name);
+        console_puts(": ");
+        console_puts(state);
+        console_putc('\n');
+        any = true;
+    }
+
+    if (!any)
+        console_puts("(no scheduled state)\n");
+}
 
 static void cmd_sleep(int argc, char **argv)
 {
@@ -1327,7 +1472,7 @@ static void cmd_sleep(int argc, char **argv)
     console_puts("sleep: not yet implemented\n");
 }
 
-#endif
+#endif /* HOST_BUILD */
 
 
 typedef void (*cmd_fn_t)(int argc, char **argv);
@@ -1344,175 +1489,203 @@ typedef struct {
 
 
 /// -------------------------
-
 /*
-  * Canonical command list
-  * name, min, max, handler, short_help, long_help
-  */
- #define CMD_LIST(X) \
-     X(help, 0, 1, console_help, \
-       "Show help", \
-       "help\n" \
-       "help <command>\n" \
-       "  Show top-level command list or detailed help for a command\n" \
-     ) \
-     \
-     X(version, 0, 0, cmd_version, \
-       "Show firmware version", \
-       "version\n" \
-       "  Show firmware version and build date\n" \
-     ) \
-     \
-     X(time, 0, 0, cmd_time, \
-       "Show current date/time", \
-       "time\n" \
-       "  Show RTC date and time\n" \
-       "  Format: YYYY-MM-DD HH:MM:SS AM|PM\n" \
-     ) \
-     \
-     X(schedule, 0, 0, cmd_schedule, \
-       "Show schedule", \
-       "schedule\n" \
-       "  Show system schedule and next resolved events\n" \
-     ) \
-     \
-     X(solar, 0, 0, cmd_solar, \
-       "Show sunrise/sunset times", \
-       "solar\n" \
-       "  Show stored location and today's solar times\n" \
-     ) \
-     \
-     X(set, 2, 6, cmd_set, \
-       "Configure settings", \
-       "set date YYYY-MM-DD\n" \
-       "set time HH:MM:SS\n" \
-       "set lat  +/-DD.DDDD\n" \
-       "set lon  +/-DDD.DDDD\n" \
-       "set tz   +/-HH\n" \
-        ) \
-     \
-     X(config, 0, 0, cmd_config, \
-       "Show configuration", \
-       "config\n" \
-       "  Show current configuration values\n" \
-       "  Note: changes are not committed until save\n" \
-     ) \
-     \
-     X(save, 0, 0, cmd_save, \
-       "Commit settings", \
-       "save\n" \
-       "  Commit configuration to EEPROM and program RTC\n" \
-     ) \
-     \
-     X(timeout, 1, 1, cmd_timeout, \
-       "Control CONFIG timeout", \
-       "timeout on\n" \
-       "timeout off\n" \
-       "  Enable or disable CONFIG inactivity timeout\n" \
-     ) \
-     \
-     X(device, 0, 3, cmd_device, \
-        "Show or set device state", \
-        "device\n" \
-        "device <name>\n" \
-        "device <name> on|off\n" \
-        "  Show all device states, show one device, or set device state\n" \
-      ) \
-     X(door, 1, 2, cmd_door, \
-       "Manually control door", \
-       "door open\n" \
-       "door close\n" \
-       "  Manually actuate the coop door\n" \
-     ) \
-     \
-     X(lock, 1, 2, cmd_lock, \
-       "Manually control lock", \
-       "lock engage\n" \
-       "lock release\n" \
-       "  Manually engage or release the door lock\n" \
-     ) \
-     \
-     X(exit, 0, 0, cmd_run, \
-       "Leave config mode", \
-       "exit\n" \
-       "  Leave CONFIG mode\n" \
-     ) \
-     X(next, 0, 0, cmd_next, \
-       "Show next scheduled event", \
-       "next\n" \
-       "  Display the next resolved scheduler event (if any)\n" \
-     ) \
-     X(event, 0, 7, cmd_event, \
-        "Event commands", \
-        "event list\n" \
-        "event add <device> <on|off> HH:MM\n" \
-        "event add <device> <on|off> midnight HH:MM\n" \
-        "event add <device> <on|off> solar sunrise +/-MIN\n" \
-        "event add <device> <on|off> solar sunset  +/-MIN\n" \
-        "event add <device> <on|off> civil dawn    +/-MIN\n" \
-        "event add <device> <on|off> civil dusk    +/-MIN\n" \
-        "event delete <index>" \
-      ) \
-      X(led, 1, 1, cmd_led, \
-        "Control door LED", \
-        "led off\n" \
-        "led red\n" \
-        "led green\n" \
-        "led pulse_red\n" \
-        "led pulse_green\n" \
-        "led blink_red\n" \
-        "led blink_green\n" \
-      ) \
-      X(rtc, 0, 0, cmd_rtc, \
-        "Show raw RTC state", \
-        "rtc\n" \
-        "  Display raw RTC date/time and validity\n" \
-        "  No DST, no staging, no scheduler logic\n" \
-      )
+ * Canonical command list
+ * name, min, max, handler, short_help, long_help
+ */
+#define CMD_LIST(X) \
+    X(help, 0, 1, console_help, \
+      "Show help", \
+      "help\n" \
+      "help <command>\n" \
+      "  Show top-level command list or detailed help for a command\n" \
+    ) \
+    \
+    X(version, 0, 0, cmd_version, \
+      "Show firmware version", \
+      "version\n" \
+      "  Show firmware version and build date\n" \
+    ) \
+    \
+    X(time, 0, 0, cmd_time, \
+      "Show current date/time", \
+      "time\n" \
+      "  Show RTC date and time\n" \
+      "  Format: YYYY-MM-DD HH:MM:SS AM|PM\n" \
+    ) \
+    \
+    X(schedule, 0, 0, cmd_schedule, \
+      "Show schedule", \
+      "schedule\n" \
+      "  Show system schedule and next resolved events\n" \
+    ) \
+    \
+    X(solar, 0, 0, cmd_solar, \
+      "Show sunrise/sunset times", \
+      "solar\n" \
+      "  Show stored location and today's solar times\n" \
+    ) \
+    \
+    X(set, 2, 6, cmd_set, \
+      "Configure settings", \
+      "set date YYYY-MM-DD\n" \
+      "set time HH:MM:SS\n" \
+      "set lat  +/-DD.DDDD\n" \
+      "set lon  +/-DDD.DDDD\n" \
+      "set tz   +/-HH\n" \
+    ) \
+    \
+    X(config, 0, 0, cmd_config, \
+      "Show configuration", \
+      "config\n" \
+      "  Show current configuration values\n" \
+      "  Note: changes are not committed until save\n" \
+    ) \
+    \
+    X(save, 0, 0, cmd_save, \
+      "Commit settings", \
+      "save\n" \
+      "  Commit configuration to EEPROM and program RTC\n" \
+    ) \
+    \
+    X(timeout, 1, 1, cmd_timeout, \
+      "Control CONFIG timeout", \
+      "timeout on\n" \
+      "timeout off\n" \
+      "  Enable or disable CONFIG inactivity timeout\n" \
+    ) \
+    \
+    X(device, 0, 3, cmd_device, \
+      "Show or set device state", \
+      "device\n" \
+      "device <name>\n" \
+      "device <name> on|off\n" \
+      "  Show all device states, show one device, or set device state\n" \
+    ) \
+    \
+    X(door, 1, 2, cmd_door, \
+      "Manually control door", \
+      "door open\n" \
+      "door close\n" \
+      "  Manually actuate the coop door\n" \
+    ) \
+    \
+    X(lock, 1, 2, cmd_lock, \
+      "Manually control lock", \
+      "lock engage\n" \
+      "lock release\n" \
+      "  Manually engage or release the door lock\n" \
+    ) \
+    \
+    X(exit, 0, 0, cmd_run, \
+      "Leave config mode", \
+      "exit\n" \
+      "  Leave CONFIG mode\n" \
+    ) \
+    \
+    X(event, 0, 7, cmd_event, \
+      "Event commands", \
+      "event list\n" \
+      "event add <device> <on|off> HH:MM\n" \
+      "event add <device> <on|off> midnight HH:MM\n" \
+      "event add <device> <on|off> solar sunrise +/-MIN\n" \
+      "event add <device> <on|off> solar sunset  +/-MIN\n" \
+      "event add <device> <on|off> civil dawn    +/-MIN\n" \
+      "event add <device> <on|off> civil dusk    +/-MIN\n" \
+      "event delete <refnum>\n" \
+    ) \
+    \
+    X(led, 1, 1, cmd_led, \
+      "Control door LED", \
+      "led off\n" \
+      "led red\n" \
+      "led green\n" \
+      "led pulse_red\n" \
+      "led pulse_green\n" \
+      "led blink_red\n" \
+      "led blink_green\n" \
+    ) \
+    \
+    X(rtc, 0, 0, cmd_rtc, \
+      "Show raw RTC state", \
+      "rtc\n" \
+      "  Display raw RTC date/time and validity\n" \
+      "  No DST, no staging, no scheduler logic\n" \
+    )
 
- /* Commands that only exist when their handlers exist */
- #ifdef HOST_BUILD
- #define CMD_SLEEP_HOST(X) \
-     X(sleep, 0, 0, cmd_sleep, \
-       "Sleep til next scheduled event", \
-       "sleep\n" \
-       "  sleep till the next resolved scheduler event (if any)\n" \
-     )
- #else
- #define CMD_SLEEP_HOST(X)
- #endif
+/* ------------------------------------------------------------
+ * Host-only commands
+ * ------------------------------------------------------------ */
 
- #ifdef __AVR__
- #include <avr/pgmspace.h>
- #define DECLARE_CMD_STRINGS(name, min, max, fn, short_h, long_h) \
-     static const char cmd_##name##_name[] PROGMEM = #name; \
-     static const char cmd_##name##_short[] PROGMEM = short_h; \
-     static const char cmd_##name##_long[] PROGMEM = long_h;
- #else
- #define DECLARE_CMD_STRINGS(name, min, max, fn, short_h, long_h) \
-     static const char *cmd_##name##_name = #name; \
-     static const char *cmd_##name##_short = short_h; \
-     static const char *cmd_##name##_long = long_h;
- #endif
+#ifdef HOST_BUILD
+#define CMD_SCHED_HOST(X) \
+    X(next, 0, 0, cmd_next, \
+      "Show next scheduled event", \
+      "next\n" \
+      "  Display the next resolved scheduler event (if any)\n" \
+    ) \
+    X(reduce, 0, 0, cmd_reduce, \
+      "Reduce schedule to expected device state", \
+      "reduce\n" \
+      "  Show the scheduler-reduced expected state for each device\n" \
+      "  at the current RTC time. No execution is performed.\n" \
+    )
+#else
+#define CMD_SCHED_HOST(X)
+#endif
 
- CMD_LIST(DECLARE_CMD_STRINGS)
- CMD_SLEEP_HOST(DECLARE_CMD_STRINGS)
+#ifdef HOST_BUILD
+#define CMD_SLEEP_HOST(X) \
+    X(sleep, 0, 0, cmd_sleep, \
+      "Sleep til next scheduled event", \
+      "sleep\n" \
+      "  sleep till the next resolved scheduler event (if any)\n" \
+    )
+#else
+#define CMD_SLEEP_HOST(X)
+#endif
 
- #ifdef __AVR__
- #define CMD_PROGMEM PROGMEM
- #else
- #define CMD_PROGMEM
- #endif
+/* ------------------------------------------------------------
+ * Command string declarations
+ * ------------------------------------------------------------ */
 
- static const cmd_entry_t cmd_table[] CMD_PROGMEM = {
- #define MAKE_CMD_ENTRY(name, min, max, fn, short_h, long_h) \
-     { cmd_##name##_name, min, max, fn, cmd_##name##_short, cmd_##name##_long },
-     CMD_LIST(MAKE_CMD_ENTRY) \
-     CMD_SLEEP_HOST(MAKE_CMD_ENTRY)
- #undef MAKE_CMD_ENTRY
- };
+#ifdef __AVR__
+#include <avr/pgmspace.h>
+#define DECLARE_CMD_STRINGS(name, min, max, fn, short_h, long_h) \
+    static const char cmd_##name##_name[] PROGMEM = #name; \
+    static const char cmd_##name##_short[] PROGMEM = short_h; \
+    static const char cmd_##name##_long[]  PROGMEM = long_h;
+#else
+#define DECLARE_CMD_STRINGS(name, min, max, fn, short_h, long_h) \
+    static const char *cmd_##name##_name  = #name; \
+    static const char *cmd_##name##_short = short_h; \
+    static const char *cmd_##name##_long  = long_h;
+#endif
 
- #define CMD_TABLE_LEN (sizeof(cmd_table) / sizeof(cmd_table[0]))
+CMD_LIST(DECLARE_CMD_STRINGS)
+CMD_SCHED_HOST(DECLARE_CMD_STRINGS)
+CMD_SLEEP_HOST(DECLARE_CMD_STRINGS)
+
+/* ------------------------------------------------------------
+ * Command table
+ * ------------------------------------------------------------ */
+
+#ifdef __AVR__
+#define CMD_PROGMEM PROGMEM
+#else
+#define CMD_PROGMEM
+#endif
+
+static const cmd_entry_t cmd_table[] CMD_PROGMEM = {
+#define MAKE_CMD_ENTRY(name, min, max, fn, short_h, long_h) \
+    { cmd_##name##_name, min, max, fn, cmd_##name##_short, cmd_##name##_long },
+    CMD_LIST(MAKE_CMD_ENTRY)
+    CMD_SCHED_HOST(MAKE_CMD_ENTRY)
+    CMD_SLEEP_HOST(MAKE_CMD_ENTRY)
+#undef MAKE_CMD_ENTRY
+};
+
+#define CMD_TABLE_LEN (sizeof(cmd_table) / sizeof(cmd_table[0]))
 
  /// -------------------------
 
