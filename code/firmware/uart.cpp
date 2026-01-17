@@ -2,39 +2,38 @@
  * uart.cpp
  *
  * Project: Chicken Coop Controller
- * Purpose: UART driver (USART1)
+ * Purpose: Source file
  *
- * Configuration:
- *   F_CPU = 8 MHz (internal RC)
- *   Baud  = 38400
- *   Mode  = Normal speed (16x)
- *   Frame = 8N1
+ * Notes:
+ *  - Offline system
+ *  - Deterministic behavior
+ *  - No network dependencies
+ *
+ * Updated: 2025-12-29
  */
 
 #include "uart.h"
 #include <avr/io.h>
 
-#define BAUD_RATE 38400UL
+#define BAUD_RATE 115200UL
 #define UBRR_VALUE ((F_CPU / (16UL * BAUD_RATE)) - 1)
 
 void uart_init(void)
 {
-    /* Normal speed (U2X1 = 0) */
-    UCSR1A = 0;
-
-    /* Set baud rate */
+    // Set baud rate
     UBRR1H = (uint8_t)(UBRR_VALUE >> 8);
     UBRR1L = (uint8_t)(UBRR_VALUE & 0xFF);
 
-    /* Enable RX and TX */
+    // Enable receiver and transmitter
     UCSR1B = (1 << RXEN1) | (1 << TXEN1);
 
-    /* 8 data bits, no parity, 1 stop bit */
+    // 8 data bits, no parity, 1 stop bit
     UCSR1C = (1 << UCSZ11) | (1 << UCSZ10);
 }
 
 int uart_getc(void)
 {
+    // If no data available, return -1 (non-blocking)
     if (!(UCSR1A & (1 << RXC1)))
         return -1;
 
@@ -43,13 +42,7 @@ int uart_getc(void)
 
 void uart_putc(char c)
 {
-    /* Optional CRLF normalization */
-    if (c == '\n') {
-        while (!(UCSR1A & (1 << UDRE1)))
-            ;
-        UDR1 = '\r';
-    }
-
+    // Wait until transmit buffer is empty
     while (!(UCSR1A & (1 << UDRE1)))
         ;
 

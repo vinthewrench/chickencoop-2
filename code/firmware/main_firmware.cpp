@@ -23,12 +23,12 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <util/delay.h>
 
 #include "config.h"
 #include "config_sw.h"
 
 #include "console/console.h"
-
 #include "uptime.h"
 #include "rtc.h"
 #include "solar.h"

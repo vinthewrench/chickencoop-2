@@ -527,9 +527,9 @@ static void cmd_schedule(int argc, char **argv)
                 g_cfg.latitude_e4,
                 g_cfg.longitude_e4);
 
-     mini_printf("TZ        : %d (DST %s)\n\n",
-        g_cfg.tz,
-        g_cfg.honor_dst ? "ON" : "OFF");
+     mini_printf("TZ        : %d (DST ", g_cfg.tz);
+     mini_printf("%s", g_cfg.honor_dst ? "ON" : "OFF");
+     mini_printf(")\n\n");
 
     /* ----- Solar ----- */
     struct solar_times sol;
@@ -775,6 +775,47 @@ static void cmd_set(int argc, char **argv)
         console_puts("OK\n");
         return;
     }
+
+    /* --------------------------------------------------
+     * set lock_pulse_ms <ms>
+     * Max ON time for lock solenoid (safety critical)
+     * -------------------------------------------------- */
+    if (!strcmp(argv[1], "lock_pulse_ms") && argc == 3) {
+        int v = atoi(argv[2]);
+
+        /* Hard safety bounds */
+        if (v < 50 || v > 5001) {
+            console_puts("ERROR\n");
+            return;
+        }
+
+        g_cfg.lock_pulse_ms = (uint16_t)v;
+        g_cfg_dirty = true;
+
+        console_puts("OK\n");
+        return;
+    }
+
+    /* --------------------------------------------------
+     * set door_travel_ms <ms>
+     * Max ON time for door motor (failsafe bound)
+     * -------------------------------------------------- */
+    if (!strcmp(argv[1], "door_travel_ms") && argc == 3) {
+        int v = atoi(argv[2]);
+
+        /* Conservative bounds – adjust if needed */
+        if (v < 1000 || v > 30000) {
+            console_puts("ERROR\n");
+            return;
+        }
+
+        g_cfg.door_travel_ms = (uint16_t)v;
+        g_cfg_dirty = true;
+
+        console_puts("OK\n");
+        return;
+    }
+
 
     console_puts("?\n");
 }
@@ -1699,30 +1740,45 @@ static const cmd_entry_t cmd_table[] CMD_PROGMEM = {
 
 #define CMD_TABLE_LEN (sizeof(cmd_table) / sizeof(cmd_table[0]))
 
- /// -------------------------
+#ifdef __AVR__
+static void read_cmd_entry(cmd_entry_t *dst, unsigned idx)
+{
+    memcpy_P(dst, &cmd_table[idx], sizeof(cmd_entry_t));
+}
+#else
+static void read_cmd_entry(cmd_entry_t *dst, unsigned idx)
+{
+    *dst = cmd_table[idx];
+}
+#endif
 
 void console_help(int argc, char **argv)
 {
+    cmd_entry_t e;
+
     /* help */
     if (argc == 1) {
         console_puts("Commands:\n");
 
         unsigned max_len = 0;
         for (unsigned i = 0; i < CMD_TABLE_LEN; i++) {
-            unsigned len = strlen(cmd_table[i].cmd);
+            read_cmd_entry(&e, i);
+            unsigned len = console_strlen(e.cmd);
             if (len > max_len)
                 max_len = len;
         }
 
         for (unsigned i = 0; i < CMD_TABLE_LEN; i++) {
-            console_puts("  ");
-            console_puts(cmd_table[i].cmd);
+            read_cmd_entry(&e, i);
 
-            unsigned len = strlen(cmd_table[i].cmd);
+            console_puts("  ");
+            console_puts_str(e.cmd);
+
+            unsigned len = console_strlen(e.cmd);
             while (len++ < max_len + 2)
                 console_putc(' ');
 
-            console_puts(cmd_table[i].help_short);
+            console_puts_str(e.help_short);
             console_putc('\n');
         }
 
@@ -1732,18 +1788,17 @@ void console_help(int argc, char **argv)
 
     /* help <command> */
     for (unsigned i = 0; i < CMD_TABLE_LEN; i++) {
-        if (!strcmp(argv[1], cmd_table[i].cmd)) {
-            if (cmd_table[i].help_long)
-                console_puts(cmd_table[i].help_long);
+        read_cmd_entry(&e, i);
+
+        if (console_strcmp(argv[1], e.cmd) == 0) {
+            if (e.help_long)
+                console_puts_str(e.help_long);
             return;
         }
     }
 
     console_puts("?\n");
 }
-
-
-// src/console/console_cmds.cpp
 
 void console_dispatch(int argc, char **argv)
 {
@@ -1752,22 +1807,24 @@ void console_dispatch(int argc, char **argv)
 
     str_to_lower(argv[0]);
 
+    cmd_entry_t e;
+
     for (unsigned i = 0; i < CMD_TABLE_LEN; i++) {
-        if (!strcmp(argv[0], cmd_table[i].cmd)) {
+        read_cmd_entry(&e, i);
+
+        if (console_strcmp(argv[0], e.cmd) == 0) {
 
             int args = argc - 1;
 
-            if (args < cmd_table[i].min_args ||
-                args > cmd_table[i].max_args) {
-
-                if (cmd_table[i].help_short) {
-                    console_puts(cmd_table[i].help_short);
+            if (args < e.min_args || args > e.max_args) {
+                if (e.help_short) {
+                    console_puts_str(e.help_short);
                     console_putc('\n');
                 }
                 return;
             }
 
-            cmd_table[i].handler(argc, argv);
+            e.handler(argc, argv);
             return;
         }
     }

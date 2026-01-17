@@ -4,18 +4,39 @@
  * Project: Chicken Coop Controller
  * Purpose: Door status LED hardware driver (AVR)
  *
- * Hardware assumptions (LOCKED, V3.0):
- *  - LED driven via DRV8212DRLR
- *  - PB5 -> DRV8212 IN1 (GREEN / OC1A)
- *  - PB6 -> DRV8212 IN2 (RED   / OC1B)
+ * Hardware model (LOCKED, V3.0):
+ *  - Indicator is a BIPOLAR (anti-parallel) two-lead LED.
+ *  - Color is determined solely by CURRENT DIRECTION,
+ *    not by individual LED pins.
  *
- * Notes:
- *  - Hardware-only layer
- *  - No timing or animation logic
- *  - PWM on one channel at a time
- *  - Safe, idempotent calls
+ * Drive topology:
+ *  - LED is driven by a DRV8212DRLR H-bridge.
+ *  - PB5 -> DRV8212 IN1
+ *  - PB6 -> DRV8212 IN2
  *
- * Updated: 2026-01-07
+ * Electrical behavior:
+ *  - IN1=1, IN2=0  → current flows IN1 → IN2 → LED shows RED
+ *  - IN1=0, IN2=1  → current flows IN2 → IN1 → LED shows GREEN
+ *  - IN1=0, IN2=0  → LED off (coast)
+ *  - IN1=1, IN2=1  → brake (MUST NOT be used)
+ *
+ * Software contract:
+ *  - This module maps CURRENT DIRECTION → COLOR.
+ *  - Public API semantics are:
+ *
+ *        door_led_green_pwm() → GREEN indication
+ *        door_led_red_pwm()   → RED indication
+ *
+ *  - Any physical polarity, wiring orientation, or LED package
+ *    details are abstracted HERE and nowhere else.
+ *
+ * Design rules:
+ *  - Hardware-only layer (no timing or animation logic)
+ *  - Only one H-bridge direction active at a time
+ *  - Outputs always driven to a safe, non-brake state
+ *  - Calls are idempotent and side-effect free
+ *
+ * Updated: 2026-01-16
  */
 
 #include "door_led.h"
@@ -24,11 +45,17 @@
 #include <stdint.h>
 
 /* --------------------------------------------------------------------------
- * Pin definitions
+ * Pin definitions (PHYSICAL REALITY)
  * -------------------------------------------------------------------------- */
 
-#define LED_IN1   PB5   /* GREEN / OC1A */
-#define LED_IN2   PB6   /* RED   / OC1B */
+/*
+ * PB5 / IN1 lights RED
+ * PB6 / IN2 lights GREEN
+ *
+ * Do NOT change these names unless hardware changes.
+ */
+#define LED_IN1   PB5   /* PHYSICAL: RED */
+#define LED_IN2   PB6   /* PHYSICAL: GREEN */
 
 /* --------------------------------------------------------------------------
  * Internal helpers
@@ -36,10 +63,16 @@
 
 static void pwm_disable_all(void)
 {
-    /* Disconnect OC1A / OC1B */
-    TCCR1A &= ~((1 << COM1A1) | (1 << COM1B1));
+    /*
+     * Fully disconnect OC1A / OC1B.
+     * Clear BOTH COM bits to avoid ghost drive or brake states.
+     */
+    TCCR1A &= ~(
+        (1 << COM1A1) | (1 << COM1A0) |
+        (1 << COM1B1) | (1 << COM1B0)
+    );
 
-    /* Force outputs low */
+    /* Force both driver inputs low (coast / LEDs off) */
     PORTB &= ~((1 << LED_IN1) | (1 << LED_IN2));
 }
 
@@ -54,13 +87,18 @@ static void pwm_init_once(void)
     /* PB5 / PB6 as outputs */
     DDRB |= (1 << LED_IN1) | (1 << LED_IN2);
 
-    /* Timer1: Fast PWM, 8-bit */
-    TCCR1A =
-        (1 << WGM10);            /* WGM10=1, WGM11=0 */
-
-    TCCR1B =
-        (1 << WGM12) |           /* WGM12=1 => Fast PWM 8-bit */
-        (1 << CS11);             /* prescaler = 8 */
+    /*
+     * Timer1 configuration:
+     *  - Fast PWM, 8-bit
+     *  - Clock prescaler = 8
+     *
+     * NOTE:
+     *  PWM output routing (OC1A / OC1B) is used only as
+     *  a duty generator. Logical color mapping is handled
+     *  explicitly below.
+     */
+    TCCR1A = (1 << WGM10);              /* WGM10=1, WGM11=0 */
+    TCCR1B = (1 << WGM12) | (1 << CS11);
 
     /* Start fully off */
     OCR1A = 0;
@@ -84,32 +122,46 @@ void door_led_off(void)
     pwm_disable_all();
 }
 
+/*
+ * GREEN LED control
+ *
+ * PHYSICAL REALITY:
+ *  - GREEN LED is driven by IN2 (PB6)
+ *  - Uses OCR1B / OC1B
+ */
 void door_led_green_pwm(uint8_t duty)
 {
     pwm_init_once();
 
-    /* Disable RED */
-    TCCR1A &= ~(1 << COM1B1);
-    PORTB  &= ~(1 << LED_IN2);
+    /* Disable RED channel (IN1 / OC1A) */
+    TCCR1A &= ~((1 << COM1A1) | (1 << COM1A0));
+    PORTB  &= ~(1 << LED_IN1);
 
-    /* Set duty */
-    OCR1A = duty;
+    /* Set GREEN duty */
+    OCR1B = duty;
 
-    /* Enable GREEN PWM */
-    TCCR1A |= (1 << COM1A1);
+    /* Enable GREEN PWM (OC1B) */
+    TCCR1A |= (1 << COM1B1);
 }
 
+/*
+ * RED LED control
+ *
+ * PHYSICAL REALITY:
+ *  - RED LED is driven by IN1 (PB5)
+ *  - Uses OCR1A / OC1A
+ */
 void door_led_red_pwm(uint8_t duty)
 {
     pwm_init_once();
 
-    /* Disable GREEN */
-    TCCR1A &= ~(1 << COM1A1);
-    PORTB  &= ~(1 << LED_IN1);
+    /* Disable GREEN channel (IN2 / OC1B) */
+    TCCR1A &= ~((1 << COM1B1) | (1 << COM1B0));
+    PORTB  &= ~(1 << LED_IN2);
 
-    /* Set duty */
-    OCR1B = duty;
+    /* Set RED duty */
+    OCR1A = duty;
 
-    /* Enable RED PWM */
-    TCCR1A |= (1 << COM1B1);
+    /* Enable RED PWM (OC1A) */
+    TCCR1A |= (1 << COM1A1);
 }

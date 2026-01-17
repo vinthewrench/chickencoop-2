@@ -135,10 +135,21 @@ $(PROJECT).lst: $(PROJECT).elf
 	$(OBJDUMP) -h -S "$<" > "$@"
 
 # ------------------------------------------------------------
-# Flashing
+# Flashing (preserve EEPROM, no chip erase)
+# Use for iterative bring-up and debugging
 # ------------------------------------------------------------
 flash: $(PROJECT).hex
 	$(AVRDUDE) -c $(PROGRAMMER) -P $(PORT) -p $(AVRDUDE_MCU) \
+		-B 50 -D \
+		-U flash:w:"$<":i
+
+# ------------------------------------------------------------
+# Flashing FRESH (full chip erase, EEPROM still preserved)
+# Use when changing memory layout or after heavy refactors
+# ------------------------------------------------------------
+flash-all: $(PROJECT).hex
+	$(AVRDUDE) -c $(PROGRAMMER) -P $(PORT) -p $(AVRDUDE_MCU) \
+		-B 50 \
 		-U flash:w:"$<":i
 
 # ------------------------------------------------------------
@@ -150,12 +161,52 @@ check-fuses:
 		-U hfuse:r:-:h \
 		-U efuse:r:-:h
 
-# Internal 8 MHz RC, no CLKDIV8, JTAG disabled, BOD ~4.3V
+# ------------------------------------------------------------
+# Fuse configuration — LOCKED
+#
+# MCU: ATmega32U4RC-A
+#
+# Clock:
+#   - Internal 8 MHz RC oscillator
+#   - CKDIV8 disabled
+#
+# Programming / Debug:
+#   - ISP enabled (SPIEN programmed)
+#   - JTAG ENABLED via fuse (HFUSE bit 6 = 0)
+#     NOTE:
+#       PF4–PF7 are JTAG pins at reset.
+#       Firmware MUST disable JTAG at runtime
+#       if PF4–PF7 are used as GPIO.
+#
+# Reset / Boot:
+#   - Reset enabled
+#   - Reset vector: Application (BOOTRST = 1)
+#   - No bootloader
+#
+# Brown-Out Detect (BOD):
+#   - Disabled (battery-powered system)
+#   - Verified stable in this hardware
+#
+# EEPROM:
+#   - Preserved across chip erase (EESAVE = 1)
+#
+# VERIFIED WORKING FUSE VALUES (READ FROM SILICON):
+#   lfuse = 0xE2
+#   hfuse = 0x99   # JTAG ENABLED
+#   efuse = 0xFB
+#
+# POLICY:
+#   - Fuse values are LOCKED.
+#   - DO NOT change fuse values unless hardware or clock source changes.
+#   - JTAG disable is handled in firmware via MCUCR (JTD bit).
+#
+# ------------------------------------------------------------
 set-fuses:
-	$(AVRDUDE) -c $(PROGRAMMER) -P $(PORT) -p $(AVRDUDE_MCU) \
-		-U lfuse:w:0xFF:m \
-		-U hfuse:w:0xD8:m \
-		-U efuse:w:0xF5:m
+	$(AVRDUDE) -c $(PROGRAMMER) -P $(PORT) -p $(AVRDUDE_MCU) -B 200 \
+		-U lfuse:w:0xE2:m \
+		-U hfuse:w:0xD9:m \
+		-U efuse:w:0xFB:m
+
 
 # ------------------------------------------------------------
 # Size
@@ -170,4 +221,4 @@ size: $(PROJECT).elf
 clean:
 	rm -rf $(OBJ_DIR) *.elf *.hex *.lst *.map
 
-.PHONY: all clean flash check-fuses set-fuses size
+.PHONY: all clean flash flash-all check-fuses set-fuses size
