@@ -25,9 +25,14 @@
 
 #include <avr/io.h>
 #include <stdint.h>
+#include <util/delay.h>
+
 
 #include "lock_hw.h"
 #include "gpio_avr.h"
+
+
+#define LOCK_MAX_ON_MS  300u   /* conservative, adjust later */
 
 /* --------------------------------------------------------------------------
  * Helpers (masked writes only)
@@ -84,4 +89,38 @@ void lock_hw_release(void)
 
     /* EN = 1 */
     set_bits(1u << LOCK_EN_BIT);
+}
+
+// static void lock_hw_pulse_engage_ms(uint16_t ms)
+// {
+//     if (ms > LOCK_MAX_ON_MS)
+//         ms = LOCK_MAX_ON_MS;
+
+//     lock_hw_engage();
+//     while (ms--) {
+//         _delay_ms(1);
+//     }
+//     lock_hw_stop();
+// }
+
+// static void lock_hw_pulse_release_ms(uint16_t ms)
+// {
+//     if (ms > LOCK_MAX_ON_MS)
+//         ms = LOCK_MAX_ON_MS;
+
+//     lock_hw_release();
+//     while (ms--) {
+//         _delay_ms(1);
+//     }
+//     lock_hw_stop();
+// }
+
+void lock_hw_pulse_engage(void)
+{
+    lock_hw_pulse_engage_ms(LOCK_MAX_ON_MS);
+}
+
+void lock_hw_pulse_release(void)
+{
+    lock_hw_pulse_release_ms(LOCK_MAX_ON_MS);
 }

@@ -72,20 +72,22 @@ void door_led_green_pwm(uint8_t duty)
 /* --------------------------------------------------------------------------
  * PWM tick (call at fixed rate, e.g. 1 kHz)
  * -------------------------------------------------------------------------- */
+ void door_led_tick(void)
+ {
+     pwm_phase++;   /* wraps at 256 */
 
-void door_led_tick(void)
-{
-    pwm_phase++;
+     /* FORCE BOTH LOW FIRST (this is the key fix) */
+     PORTA &= ~((1u << LED_IN1_BIT) | (1u << LED_IN2_BIT));
 
-    /* RED */
-    if (pwm_red && pwm_phase < pwm_red)
-        PORTA |=  (1u << LED_IN1_BIT);
-    else
-        PORTA &= ~(1u << LED_IN1_BIT);
+     /* RED */
+     if (pwm_red && pwm_phase < pwm_red) {
+         PORTA |= (1u << LED_IN1_BIT);
+         return;
+     }
 
-    /* GREEN */
-    if (pwm_green && pwm_phase < pwm_green)
-        PORTA |=  (1u << LED_IN2_BIT);
-    else
-        PORTA &= ~(1u << LED_IN2_BIT);
-}
+     /* GREEN */
+     if (pwm_green && pwm_phase < pwm_green) {
+         PORTA |= (1u << LED_IN2_BIT);
+         return;
+     }
+ }

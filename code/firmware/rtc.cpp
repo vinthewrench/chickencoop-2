@@ -2,7 +2,7 @@
  * rtc.cpp
  *
  * Project: Chicken Coop Controller
- * Purpose: RTC implementation for PCF8523
+ * Purpose: RTC implementation for PCF8523T
  *
  * Notes:
  *  - Offline system
@@ -10,18 +10,20 @@
  *  - No DST or timezone logic (handled elsewhere)
  *  - Alarm interrupt used solely for wake from sleep
  *
- * Hardware assumptions (LOCKED V3.0):
- *  - RTC: NXP PCF8523
+ * Hardware assumptions (LOCKED V3.0/V3.2):
+ *  - RTC: NXP PCF8523T
+ *  - Crystal: AB26T 32.768 kHz (12.5 pF load)
  *  - INT output is open-drain, active-low, latched until AF is cleared
  *  - RTC INT is wired to PB7 (PCINT7)
  *  - External pull-up (~10 kΩ) present on RTC INT line
  *
- * Interrupt semantics:
- *  - Alarm INT remains asserted (low) until AF is cleared
- *  - Wake logic MUST confirm alarm source by reading RTC flags
- *  - PCINT edge behavior (assert + release) is expected and harmless
+ * PCF8523-specific rules:
+ *  - Time registers MUST be written with oscillator stopped (CTRL1.STOP=1)
+ *  - Oscillator MUST be restarted after setting time
+ *  - Seconds[7] is OS (Oscillator Stop) flag and must be cleared when setting time
+ *  - Crystal load capacitance (CTRL1[4:3]) must be configured in software
  *
- * Updated: 2026-01-05
+ * Updated: 2026-02-04
  */
 
 #include "rtc.h"
@@ -53,36 +55,18 @@
 #define REG_ALARM_WEEKDAY    0x0D
 
 /* Control bits */
-#define CTRL1_STOP_BIT       (1 << 5)   /* 1 = oscillator stopped */
-#define CTRL2_AIE_BIT        (1 << 1)
-#define CTRL2_AF_BIT         (1 << 3)
+#define CTRL1_STOP_BIT       (1u << 5)  /* 1 = oscillator stopped */
+#define CTRL2_AIE_BIT        (1u << 1)
+#define CTRL2_AF_BIT         (1u << 3)
 
 /* Alarm disable flag */
-#define ALARM_DISABLE        (1 << 7)
+#define ALARM_DISABLE        (1u << 7)
 
-
-/* --------------------------------------------------------------------------
- * Bring-up / ownership
- * -------------------------------------------------------------------------- */
-
-void rtc_init(void)
-{
-    /*
-     * RTC ownership hook.
-     *
-     * This function intentionally performs no policy decisions.
-     * No alarms are armed.
-     * No flags are cleared.
-     * No validation is performed.
-     *
-     * Purpose:
-     *  - Establish that the firmware owns the RTC hardware
-     *  - Provide a single, stable initialization point for RUN mode later
-     *
-     * All behavioral use of the RTC (alarms, sleep, scheduler)
-     * will be enabled only in RUN mode.
-     */
-}
+/* Crystal load capacitance: Control_1[4:3]
+ * AB26T nominal load = 12.5 pF.
+ */
+#define CTRL1_CL_MASK        (3u << 3)
+#define CTRL1_CL_12P5PF      (1u << 3)
 
 /* --------------------------------------------------------------------------
  * Helpers
@@ -99,12 +83,37 @@ static uint8_t bin_to_bcd(uint8_t v)
 }
 
 /* --------------------------------------------------------------------------
+ * Bring-up
+ * -------------------------------------------------------------------------- */
+
+void rtc_init(void)
+{
+    uint8_t c1;
+
+    if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1)) {
+        return;
+    }
+
+    /* Configure crystal load capacitance for AB26T (12.5 pF). */
+    c1 &= (uint8_t)~CTRL1_CL_MASK;
+    c1 |= CTRL1_CL_12P5PF;
+
+    /* Ensure oscillator is running. */
+    c1 &= (uint8_t)~CTRL1_STOP_BIT;
+
+    (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1);
+
+    /* Release INT line if a stale alarm flag is set. */
+    rtc_alarm_clear_flag();
+}
+
+/* --------------------------------------------------------------------------
  * Oscillator / validity checks
  * -------------------------------------------------------------------------- */
 
 /*
  * Returns true if the RTC crystal oscillator is running.
- * This directly reflects the CTRL1.STOP bit.
+ * This directly reflects CTRL1.STOP.
  */
 bool rtc_oscillator_running(void)
 {
@@ -118,12 +127,10 @@ bool rtc_oscillator_running(void)
 }
 
 /*
- * Returns true if the stored time is considered valid.
- * This checks the VL (Voltage Low) flag in the seconds register.
- *
- * Note:
- *  - VL = 1 means time may be invalid due to power loss
- *  - This does NOT indicate whether the oscillator is currently running
+ * Returns true if stored time is considered valid.
+ * PCF8523 Seconds[7] is OS (Oscillator Stop) flag:
+ *  - OS=1 indicates time may be invalid due to oscillator stop/power loss.
+ *  - OS=0 indicates time is valid.
  */
 bool rtc_time_is_set(void)
 {
@@ -133,8 +140,7 @@ bool rtc_time_is_set(void)
         return false;
     }
 
-    /* VL flag is bit 7 of seconds register */
-    return (sec & (1 << 7)) == 0;
+    return (sec & (1u << 7)) == 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -146,7 +152,7 @@ void rtc_get_time(int *y, int *mo, int *d,
 {
     uint8_t buf[7];
 
-    if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf))) {
+    if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, buf, (uint8_t)sizeof(buf))) {
         return;
     }
 
@@ -161,17 +167,35 @@ void rtc_get_time(int *y, int *mo, int *d,
 void rtc_set_time(int y, int mo, int d,
                   int h, int m, int s)
 {
+    uint8_t c1;
     uint8_t buf[7];
 
-    buf[0] = bin_to_bcd((uint8_t)s)  & 0x7F;
-    buf[1] = bin_to_bcd((uint8_t)m)  & 0x7F;
-    buf[2] = bin_to_bcd((uint8_t)h)  & 0x3F;
-    buf[3] = bin_to_bcd((uint8_t)d)  & 0x3F;
-    buf[4] = 0; /* weekday not used */
-    buf[5] = bin_to_bcd((uint8_t)mo) & 0x1F;
-    buf[6] = bin_to_bcd((uint8_t)(y % 100));
+    /* Stop oscillator before writing time (PCF8523 requirement). */
+    if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1)) {
+        return;
+    }
 
-    (void)i2c_write(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf));
+    c1 |= CTRL1_STOP_BIT;
+    (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1);
+
+    /* Ensure crystal load capacitance is set (defensive). */
+    c1 &= (uint8_t)~CTRL1_CL_MASK;
+    c1 |= CTRL1_CL_12P5PF;
+
+    /* Prepare time with OS flag cleared (Seconds[7]=0). */
+    buf[0] = (uint8_t)(bin_to_bcd((uint8_t)s)  & 0x7F);
+    buf[1] = (uint8_t)(bin_to_bcd((uint8_t)m)  & 0x7F);
+    buf[2] = (uint8_t)(bin_to_bcd((uint8_t)h)  & 0x3F);
+    buf[3] = (uint8_t)(bin_to_bcd((uint8_t)d)  & 0x3F);
+    buf[4] = 0; /* weekday not used */
+    buf[5] = (uint8_t)(bin_to_bcd((uint8_t)mo) & 0x1F);
+    buf[6] = (uint8_t)bin_to_bcd((uint8_t)(y % 100));
+
+    (void)i2c_write(PCF8523_ADDR7, REG_SECONDS, buf, (uint8_t)sizeof(buf));
+
+    /* Restart oscillator (and keep CL set). */
+    c1 &= (uint8_t)~CTRL1_STOP_BIT;
+    (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1);
 }
 
 /* --------------------------------------------------------------------------
@@ -182,13 +206,13 @@ bool rtc_alarm_set_hm(uint8_t hour, uint8_t minute)
 {
     uint8_t a[4];
 
-    /* Minute/hour match only; day and weekday disabled */
-    a[0] = bin_to_bcd(minute) & 0x7F;
-    a[1] = bin_to_bcd(hour)   & 0x3F;
+    /* Minute/hour match only; day and weekday disabled. */
+    a[0] = (uint8_t)(bin_to_bcd(minute) & 0x7F);
+    a[1] = (uint8_t)(bin_to_bcd(hour)   & 0x3F);
     a[2] = ALARM_DISABLE;
     a[3] = ALARM_DISABLE;
 
-    if (!i2c_write(PCF8523_ADDR7, REG_ALARM_MINUTE, a, sizeof(a))) {
+    if (!i2c_write(PCF8523_ADDR7, REG_ALARM_MINUTE, a, (uint8_t)sizeof(a))) {
         return false;
     }
 
@@ -199,7 +223,7 @@ bool rtc_alarm_set_hm(uint8_t hour, uint8_t minute)
 
     /*
      * Enable alarm interrupt and clear any stale alarm flag.
-     * INT will assert low when the alarm matches and remain low
+     * INT asserts low when the alarm matches and remains low
      * until AF is cleared via rtc_alarm_clear_flag().
      */
     c2 |= CTRL2_AIE_BIT;
@@ -228,7 +252,7 @@ void rtc_alarm_clear_flag(void)
         return;
     }
 
-    /* Clearing AF releases the INT line */
+    /* Clearing AF releases the INT line (open-drain). */
     c2 &= (uint8_t)~CTRL2_AF_BIT;
     (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_2, &c2, 1);
 }
