@@ -29,6 +29,8 @@
 #include "config_sw.h"
 
 #include "console/console.h"
+#include "console/mini_printf.h"
+
 #include "uptime.h"
 #include "rtc.h"
 #include "solar.h"
@@ -45,15 +47,20 @@
 #include "devices/led_state_machine.h"
 
 #include "platform/gpio_avr.h"
+#include "platform/i2c.h"
 
 
 int main(void)
 {
-    /* ----------------------------------------------------------
-     * Bring-up
-     * ---------------------------------------------------------- */
-    uptime_init();
-    rtc_init();
+
+    uart_init();
+
+    /* 1. Initialize I2C first */
+    if (!i2c_init(100000)) {
+        mini_printf("I2C init failed\n");
+        while (1);
+    }
+
 
     coop_gpio_init();
 

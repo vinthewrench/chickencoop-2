@@ -578,11 +578,11 @@ static void cmd_set(int argc, char **argv)
             return;
         }
 
-        /* RTC must already have a valid time */
-        if (!rtc_time_is_set()) {
-            console_puts("ERROR: RTC TIME NOT SET\n");
-            return;
-        }
+        // /* RTC must already have a valid time */
+        // if (!rtc_time_is_set()) {
+        //     console_puts("ERROR: RTC TIME NOT SET\n");
+        //     return;
+        // }
 
         /* Preserve existing RTC time-of-day */
         rtc_get_time(NULL, NULL, NULL, &h, &m, &s);

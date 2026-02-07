@@ -96,6 +96,13 @@ static void put_long_pad(int32_t v, unsigned int width, char pad)
     }
 }
 
+static void put_hex8(uint8_t v)
+{
+    const char *hex = "0123456789ABCDEF";
+    console_putc(hex[(v >> 4) & 0x0F]);
+    console_putc(hex[v & 0x0F]);
+}
+
 void mini_printf(const char *fmt, ...)
 {
     va_list ap;
@@ -157,6 +164,10 @@ void mini_printf(const char *fmt, ...)
 
         case 'L':
             put_latlon_e4(va_arg(ap, int32_t));
+            break;
+
+        case 'x':
+            put_hex8((uint8_t)va_arg(ap, unsigned int));
             break;
 
         case '%':
