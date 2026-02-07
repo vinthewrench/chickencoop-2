@@ -250,28 +250,70 @@ void rtc_get_time(int *y, int *mo, int *d,
  *
  * @return true on success.
  */
-bool rtc_set_time(int y, int mo, int d, int h, int m, int s)
-{
-    uint8_t buf[7];
 
-    if (y < 2000 || y > 2099 ||
-        mo < 1 || mo > 12 ||
-        d < 1 || d > 31 ||
-        h < 0 || h > 23 ||
-        m < 0 || m > 59 ||
-        s < 0 || s > 59)
-        return false;
+ bool rtc_set_time(int y, int mo, int d,
+                   int h, int m, int s)
+ {
+     uint8_t c1;
+     uint8_t buf[7];
+     uint8_t sec1, sec2;
 
-    buf[0] = bin_to_bcd((uint8_t)s) & 0x7F;
-    buf[1] = bin_to_bcd((uint8_t)m) & 0x7F;
-    buf[2] = bin_to_bcd((uint8_t)h) & 0x3F;
-    buf[3] = bin_to_bcd((uint8_t)d) & 0x3F;
-    buf[4] = 0;
-    buf[5] = bin_to_bcd((uint8_t)mo) & 0x1F;
-    buf[6] = bin_to_bcd((uint8_t)(y % 100));
+     /* 1. Read CTRL1 and assert STOP (preserve CL bits) */
+     if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
+         return false;
 
-    return i2c_write(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf));
-}
+     c1 |= CTRL1_STOP_BIT;
+     if (!i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
+         return false;
+
+     /* 2. Confirm STOP latched */
+     uint8_t attempts = 20;
+     do {
+         if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
+             return false;
+         if (c1 & CTRL1_STOP_BIT)
+             break;
+     } while (--attempts);
+
+     if (attempts == 0)
+         return false;
+
+     /* 3. Verify seconds frozen */
+     if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, &sec1, 1))
+         return false;
+     if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, &sec2, 1))
+         return false;
+     if (sec1 != sec2)
+         return false;
+
+     /* 4. Write time (OS flag cleared) */
+     buf[0] = bin_to_bcd((uint8_t)s) & 0x7F;
+     buf[1] = bin_to_bcd((uint8_t)m) & 0x7F;
+     buf[2] = bin_to_bcd((uint8_t)h) & 0x3F;
+     buf[3] = bin_to_bcd((uint8_t)d) & 0x3F;
+     buf[4] = 0;
+     buf[5] = bin_to_bcd((uint8_t)mo) & 0x1F;
+     buf[6] = bin_to_bcd((uint8_t)(y % 100));
+
+     if (!i2c_write(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf)))
+         return false;
+
+     /* 5. Restart oscillator */
+     c1 &= (uint8_t)~CTRL1_STOP_BIT;
+     if (!i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
+         return false;
+
+     /* 6. Confirm restart */
+     attempts = 20;
+     do {
+         if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
+             return false;
+         if ((c1 & CTRL1_STOP_BIT) == 0)
+             break;
+     } while (--attempts);
+
+     return true;
+ }
 
 /* ============================================================================
  * ALARM API

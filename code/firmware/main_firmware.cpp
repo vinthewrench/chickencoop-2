@@ -65,7 +65,6 @@ int main(void)
     rtc_init();
 
     coop_gpio_init();
-    coop_gpio_init();
 
     device_init();
     scheduler_init();
