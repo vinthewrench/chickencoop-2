@@ -61,7 +61,10 @@ int main(void)
         while (1);
     }
 
+    uptime_init();
+    rtc_init();
 
+    coop_gpio_init();
     coop_gpio_init();
 
     device_init();
