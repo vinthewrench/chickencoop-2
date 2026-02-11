@@ -65,6 +65,28 @@ static void door_tick(uint32_t now_ms)
     door_sm_tick(now_ms);
 }
 
+static bool door_busy()
+{
+
+    bool is_busy = true;
+
+    door_motion_t m = door_sm_get_motion();
+
+
+    switch (m) {
+        case DOOR_IDLE_UNKNOWN:
+        case DOOR_IDLE_CLOSED:
+        case DOOR_IDLE_OPEN:
+        is_busy = false;
+        break;
+
+        default:  break;
+
+    }
+    return is_busy;
+}
+
+
 /* --------------------------------------------------------------------------
  * Device registration
  * -------------------------------------------------------------------------- */
@@ -76,5 +98,6 @@ Device door_device = {
     .get_state    = door_get_state,
     .set_state    = door_set_state,
     .state_string = door_state_string,
-    .tick         = door_tick
+    .tick         = door_tick,
+    .is_busy      = door_busy
 };

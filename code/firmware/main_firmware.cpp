@@ -142,268 +142,255 @@ static void reset_cause_debug_print(void)
  * MAIN
  * ========================================================================== */
 
-int main(void)
-{
-    reset_cause_capture_early();
+ int main(void)
+ {
+     reset_cause_capture_early();
 
      /* If brown-out reset, allow rails + peripherals to settle */
      if (g_reset_flags & _BV(BORF)) {
          _delay_ms(50);
      }
 
+     uart_init();
 
-    uart_init();
+     uptime_init();
+     coop_gpio_init();
 
-    if (!i2c_init(100000)) {
-        mini_printf("I2C init failed\n");
-        while (1);
-    }
+     if (!i2c_init(100000)) {
 
-    uptime_init();
-    rtc_init();
+         /*
+          * I2C init failed.
+          * Indicate fatal error with fast RED blink.
+          * Never return.
+          */
 
-    coop_gpio_init();
+          led_state_machine_init();
+          led_state_machine_set(LED_BLINK, LED_RED);
 
-    /* INT0 wake path (PD2) */
-    system_sleep_init();
+          for(;;){
+               led_state_machine_tick(uptime_millis());
+           }
+      }
 
-    sei();
+     rtc_init();
 
-    device_init();
-    scheduler_init();
+     system_sleep_init();
 
-    (void)config_load(&g_cfg);
+     sei();
 
-    /* ----------------------------------------------------------
-     * CONFIG MODE
-     * ---------------------------------------------------------- */
-
-    static bool config_consumed = false;
-
-    if (config_sw_state() && !config_consumed) {
-
-        config_consumed = true;
-
-        console_init();
-
-        reset_cause_debug_print();   /* <-- add this here */
-
-        if (!rtc_time_is_set())
-            led_state_machine_set(LED_BLINK, LED_RED);
-
-        while (!console_should_exit()) {
-            console_poll();
-            device_tick(uptime_millis());
-
-
-            ///-----------
-            /* Re-arm INT1 only when door switch is released */
-            EIFR |= (uint8_t)(1u << INTF1);
-            if (!gpio_door_sw_is_asserted()) {
-                EIMSK |= (uint8_t)(1u << INT1);
-            }
-
-            /* ------------------------------------------------------
-             * Manual Door Switch Event
-             * ------------------------------------------------------ */
-            if (g_door_event) {
-
-                g_door_event = 0u;
-
-                /* Confirm switch still asserted (debounce) */
-                _delay_ms(20);
-
-
-                if (gpio_door_sw_is_asserted()) {
-                   door_sm_toggle();
-                }
-            }
-
-            ///---
-
-
-        }
-    }
-
-
-    /* ----------------------------------------------------------
-     * RUN MODE requires valid RTC
-     * ---------------------------------------------------------- */
-    if (!rtc_time_is_set()) {
-        led_state_machine_set(LED_BLINK, LED_RED);
-        for (;;) {
-            device_tick(uptime_millis());
-        }
-    }
-
-
-
-    /* Healthy boot pulse */
-    led_state_machine_set(LED_ON, LED_GREEN);
-    {
-        uint32_t t0 = uptime_millis();
-        while ((uint32_t)(uptime_millis() - t0) < 1000u)
-            device_tick(uptime_millis());
-    }
-    led_state_machine_set(LED_OFF, LED_GREEN);
-
-    /* ----------------------------------------------------------
-     * Scheduler state
-     * ---------------------------------------------------------- */
-    uint16_t last_minute = 0xFFFF;
-    uint32_t last_etag   = 0;
-
-    int last_y  = -1;
-    int last_mo = -1;
-    int last_d  = -1;
-
-    struct solar_times sol;
-    bool have_sol = false;
-
-    /* ----------------------------------------------------------
-     * MAIN LOOP
-     * ---------------------------------------------------------- */
-    for (;;) {
-
-    /* Always clear AF first.
-           This releases INT line high again. */
-        rtc_alarm_clear_flag();
-
-        /* Re-arm INT0 after AF cleared */
-        EIFR  |= (uint8_t)(1u << INTF0);
-        EIMSK |= (uint8_t)(1u << INT0);
-
-        /* Re-arm INT1 only when door switch is released */
-        EIFR |= (uint8_t)(1u << INTF1);
-        if (!gpio_door_sw_is_asserted()) {
-            EIMSK |= (uint8_t)(1u << INT1);
-        }
-
-        /* ------------------------------------------------------
-         * Manual Door Switch Event
-         * ------------------------------------------------------ */
-        if (g_door_event) {
-
-            g_door_event = 0u;
-
-            /* Confirm switch still asserted (debounce) */
-            _delay_ms(20);
-
-
-            if (gpio_door_sw_is_asserted()) {
-                mini_printf("DOOR SW\n");
-                door_sm_toggle();
-            }
-        }
-
-
-        /* Read time */
-        int y, mo, d, h, m, s;
-        rtc_get_time(&y, &mo, &d, &h, &m, &s);
-
-        uint16_t now_minute = minute_of_day(h, m);
-        uint32_t cur_etag   = schedule_etag();
-
-        bool minute_changed = (now_minute != last_minute);
-        bool schedule_dirty = (cur_etag != last_etag);
-
-        /* ------------------------------------------------------
-         * Sleep if nothing changed
-         * ------------------------------------------------------ */
-        if (!minute_changed && !schedule_dirty) {
-
-            uint16_t next_min;
-            uint16_t wake_min;
-
-            if (scheduler_next_event_minute(&next_min))
-                wake_min = strictly_future_minute(now_minute, next_min);
-            else
-                wake_min = next_minute(now_minute);
-
-            (void)rtc_alarm_set_minute_of_day(wake_min);
-
-            system_sleep_until(wake_min);
-
-            continue;
-        }
-
-        last_minute = now_minute;
-        last_etag   = cur_etag;
-
-        /* ------------------------------------------------------
-         * Solar recompute per day
-         * ------------------------------------------------------ */
-        if (y != last_y || mo != last_mo || d != last_d) {
-
-            have_sol = false;
-
-            if (g_cfg.latitude_e4 || g_cfg.longitude_e4) {
-
-                double lat = (double)g_cfg.latitude_e4  / 10000.0;
-                double lon = (double)g_cfg.longitude_e4 / 10000.0;
-
-                int tz = g_cfg.tz;
-                if (g_cfg.honor_dst && is_us_dst(y, mo, d, h))
-                    tz += 1;
-
-                have_sol = solar_compute(
-                    y, mo, d,
-                    lat,
-                    lon,
-                    (int8_t)tz,
-                    &sol
-                );
-            }
-
-            scheduler_update_day(
-                y, mo, d,
-                have_sol ? &sol : NULL,
-                have_sol
-            );
-
-            last_y  = y;
-            last_mo = mo;
-            last_d  = d;
-        }
-
-        /* ------------------------------------------------------
-         * Apply schedule
-         * ------------------------------------------------------ */
-        {
-            struct reduced_state rs;
-
-            size_t used = 0;
-            const Event *events = config_events_get(&used);
-
-            if (events && used > 0) {
-
-                state_reducer_run(
-                    events,
-                    MAX_EVENTS,
-                    have_sol ? &sol : NULL,
-                    now_minute,
-                    &rs
-                );
-
-                schedule_apply(&rs);
-            }
-        }
-
-        /* ------------------------------------------------------
-         * Program next wake
-         * ------------------------------------------------------ */
-        {
-            uint16_t next_min;
-            uint16_t wake_min;
-
-            if (scheduler_next_event_minute(&next_min))
-                wake_min = strictly_future_minute(now_minute, next_min);
-            else
-                wake_min = next_minute(now_minute);
-
-            (void)rtc_alarm_set_minute_of_day(wake_min);
-
-            system_sleep_until(wake_min);
-        }
-    }
-}
+     device_init();
+     scheduler_init();
+
+     (void)config_load(&g_cfg);
+
+     /* ----------------------------------------------------------
+      * Boot LED pulse
+      * ---------------------------------------------------------- */
+     led_state_machine_set(LED_BLINK, LED_GREEN, 4);
+
+     /* ----------------------------------------------------------
+      * Scheduler state
+      * ---------------------------------------------------------- */
+     uint16_t last_minute = 0xFFFF;
+     uint32_t last_etag   = 0;
+
+     int last_y  = -1;
+     int last_mo = -1;
+     int last_d  = -1;
+
+     struct solar_times sol;
+     bool have_sol = false;
+
+     /* ----------------------------------------------------------
+      * Mode state
+      * ---------------------------------------------------------- */
+     bool in_config_mode = false;
+
+     /* ----------------------------------------------------------
+      * Door debounce state
+      * ---------------------------------------------------------- */
+     uint8_t  door_debounce_active = 0;
+     uint32_t door_debounce_start_ms = 0;
+
+     /* ----------------------------------------------------------
+      * MAIN LOOP
+      * ---------------------------------------------------------- */
+     for (;;) {
+
+         uint32_t now_ms = uptime_millis();
+
+         /* Always tick devices */
+         device_tick(now_ms);
+
+         /* ------------------------------------------------------
+          * Live CONFIG switch handling
+          * ------------------------------------------------------ */
+         bool config_now = config_sw_state();
+
+         if (config_now && !in_config_mode) {
+
+             in_config_mode = true;
+
+             console_init();
+             reset_cause_debug_print();
+
+             if (!rtc_time_is_set())
+                 led_state_machine_set(LED_BLINK, LED_RED);
+         }
+         else if (!config_now && in_config_mode) {
+
+             in_config_mode = false;
+         }
+
+         /* ------------------------------------------------------
+          * Door ISR latch → start debounce window
+          * ------------------------------------------------------ */
+         if (g_door_event && !door_debounce_active) {
+             g_door_event = 0u;
+             door_debounce_active = 1u;
+             door_debounce_start_ms = now_ms;
+         }
+
+         /* ------------------------------------------------------
+          * Debounce state machine (non-blocking)
+          * ------------------------------------------------------ */
+         if (door_debounce_active) {
+
+             if ((uint32_t)(now_ms - door_debounce_start_ms) >= 20u) {
+
+                 door_debounce_active = 0u;
+
+                 if (gpio_door_sw_is_asserted()) {
+                     door_sm_toggle();
+                 }
+             }
+         }
+
+         /*
+          * Re-arm INT1 only when:
+          *  - switch is released
+          *  - debounce window is complete
+          */
+         if (!gpio_door_sw_is_asserted() && !door_debounce_active) {
+             EIFR  |= (uint8_t)(1u << INTF1);
+             EIMSK |= (uint8_t)(1u << INT1);
+         }
+
+         /* ------------------------------------------------------
+          * CONFIG MODE behavior
+          * ------------------------------------------------------ */
+         if (in_config_mode) {
+             console_poll();
+             continue;   /* never sleep in config */
+         }
+
+         /* ------------------------------------------------------
+          * Require valid RTC in RUN mode
+          * ------------------------------------------------------ */
+         if (!rtc_time_is_set()) {
+             led_state_machine_set(LED_BLINK, LED_RED);
+             continue;
+         }
+
+         /* ------------------------------------------------------
+          * Release RTC INT line
+          * ------------------------------------------------------ */
+         rtc_alarm_clear_flag();
+         EIFR  |= (uint8_t)(1u << INTF0);
+         EIMSK |= (uint8_t)(1u << INT0);
+
+         /* ------------------------------------------------------
+          * Time Read
+          * ------------------------------------------------------ */
+         int y, mo, d, h, m, s;
+         rtc_get_time(&y, &mo, &d, &h, &m, &s);
+
+         uint16_t now_minute = minute_of_day(h, m);
+         uint32_t cur_etag   = schedule_etag();
+
+         bool minute_changed = (now_minute != last_minute);
+         bool schedule_dirty = (cur_etag != last_etag);
+
+         /* ------------------------------------------------------
+          * Solar recompute (once per day)
+          * ------------------------------------------------------ */
+         if (y != last_y || mo != last_mo || d != last_d) {
+
+             have_sol = false;
+
+             if (g_cfg.latitude_e4 || g_cfg.longitude_e4) {
+
+                 double lat = (double)g_cfg.latitude_e4  / 10000.0;
+                 double lon = (double)g_cfg.longitude_e4 / 10000.0;
+
+                 int tz = g_cfg.tz;
+                 if (g_cfg.honor_dst && is_us_dst(y, mo, d, h))
+                     tz += 1;
+
+                 have_sol = solar_compute(
+                     y, mo, d,
+                     lat,
+                     lon,
+                     (int8_t)tz,
+                     &sol
+                 );
+             }
+
+             scheduler_update_day(
+                 y, mo, d,
+                 have_sol ? &sol : NULL,
+                 have_sol
+             );
+
+             last_y  = y;
+             last_mo = mo;
+             last_d  = d;
+         }
+
+         /* ------------------------------------------------------
+          * Apply schedule
+          * ------------------------------------------------------ */
+         if (minute_changed || schedule_dirty) {
+
+             last_minute = now_minute;
+             last_etag   = cur_etag;
+
+             struct reduced_state rs;
+
+             size_t used = 0;
+             const Event *events = config_events_get(&used);
+
+             if (events && used > 0) {
+
+                 state_reducer_run(
+                     events,
+                     MAX_EVENTS,
+                     have_sol ? &sol : NULL,
+                     now_minute,
+                     &rs
+                 );
+
+                 schedule_apply(&rs);
+             }
+         }
+
+         /* ------------------------------------------------------
+          * Sleep decision
+          * ------------------------------------------------------ */
+         if (!devices_busy() &&
+             !minute_changed &&
+             !schedule_dirty)
+         {
+             uint16_t next_min;
+             uint16_t wake_min;
+
+             if (scheduler_next_event_minute(&next_min))
+                 wake_min = strictly_future_minute(now_minute, next_min);
+             else
+                 wake_min = next_minute(now_minute);
+
+             (void)rtc_alarm_set_minute_of_day(wake_min);
+             system_sleep_until(wake_min);
+         }
+     }
+ }

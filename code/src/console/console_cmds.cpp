@@ -98,9 +98,6 @@ static inline uint8_t gpio_door_sw_is_asserted(void)
 
 #endif
 
-
-extern bool want_exit;
-
 // -----------------------------------------------------------------------------
 // CONFIG shadow state
 //   - set commands modify RAM shadow only
@@ -123,7 +120,6 @@ static void cmd_save(int argc, char **argv);
 static void cmd_timeout(int argc, char **argv);
 static void cmd_door(int argc, char **argv);
 static void cmd_lock(int argc, char **argv);
-static void cmd_run(int argc, char **argv);
 static void cmd_event(int argc, char **argv);
 static void cmd_sleep(int argc, char **argv);
 
@@ -1067,12 +1063,6 @@ static void cmd_config(int, char **)
 
 void console_help(int argc, char **argv);
 
-static void cmd_run(int,char**)
-{
-    console_puts("Leaving CONFIG mode\n");
-    want_exit = true;
-}
-
 static void cmd_event(int argc, char **argv)
 {
     ensure_cfg_loaded();
@@ -1700,12 +1690,6 @@ typedef struct {
       "lock engage\n" \
       "lock release\n" \
       "  Manually engage or release the door lock\n" \
-    ) \
-    \
-    X(exit, 0, 0, cmd_run, \
-      "Leave config mode", \
-      "exit\n" \
-      "  Leave CONFIG mode\n" \
     ) \
     \
     X(event, 0, 7, cmd_event, \

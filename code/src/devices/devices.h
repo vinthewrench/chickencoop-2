@@ -140,3 +140,31 @@ bool device_parse_state_by_id(uint8_t id,
  * Call tick() on all registered devices that provide one.
  */
 void device_tick(uint32_t now_ms);
+
+/*
+ * devices_busy()
+ *
+ * Returns true if any device state machine is currently active
+ * and requires CPU time.
+ *
+ * Purpose:
+ *   Prevent the main loop from entering sleep while
+ *   actuators or timed sequences are in progress.
+ *
+ * Design Rules:
+ *   - This function is the single authority for “system busy”.
+ *   - main_firmware.cpp must NOT inspect individual devices.
+ *   - Each device state machine is responsible for reporting
+ *     its own active / idle status.
+ *
+ * Typical cases:
+ *   - Door actuator is moving
+ *   - Lock is energizing
+ *   - Relay pulse in progress
+ *   - Any timed mechanical action not yet complete
+ *
+ * Returns:
+ *   true  → System must remain awake
+ *   false → Safe to enter sleep
+ */
+bool devices_busy(void);

@@ -10,24 +10,7 @@
  *
  * Anything else is wrong.
  *
- * Updated: 2026-02-11
- *
- * ---------------------------------------------------------------------------
- * EXECUTION MODEL (IMPORTANT)
- * ---------------------------------------------------------------------------
- * One engine, one loop.
- *
- * - device_tick() is ALWAYS serviced while awake.
- * - Console "config mode" does NOT create a second universe.
- *   It just changes what the loop does while awake.
- * - Manual door switch (PD3 / INT1) is handled as an event latch:
- *     ISR sets g_door_event and masks INT1 (one-shot).
- *     Main consumes event, confirms switch asserted, toggles door state machine.
- *     Main rearms INT1 only after the switch is released.
- *
- * Sleep is opportunistic:
- * - Only taken when not in config console, RTC is valid, and
- *   scheduler says nothing changed (minute and schedule etag stable).
+ * Updated: 2026-02-08
  */
 
 #include <stdbool.h>
@@ -62,41 +45,50 @@
 #include "platform/gpio_avr.h"
 #include "platform/i2c.h"
 
-/* ============================================================================
- * Interrupt event latches
- * ========================================================================== */
-
-static volatile uint8_t g_door_event = 0;
 
 /* ============================================================================
- * INT0 WAKE (PD2 / RTC)
+ * INT0 WAKE (PD2)
  * ========================================================================== */
+ /*
+  * INT0 ISR
+  *
+  * One-shot mask so we don't re-enter while
+  * RTC INT line is still held low (AF not cleared yet).
+  */
+ ISR(INT0_vect)
+ {
+     EIMSK &= (uint8_t)~(1u << INT0);
+ }
 
-/*
- * INT0 ISR
- *
- * One-shot mask so we don't re-enter while
- * RTC INT line is still held low (AF not cleared yet).
- */
-ISR(INT0_vect)
-{
-    EIMSK &= (uint8_t)~(1u << INT0);
-}
+ static volatile uint8_t g_door_event = 0;
 
-/*
- * INT1 ISR (PD3 / door switch)
- *
- * One-shot:
- *  - mask INT1 immediately
- *  - latch event
- *
- * Main rearms INT1 only after switch release.
- */
-ISR(INT1_vect)
-{
-    EIMSK &= (uint8_t)~(1u << INT1);
-    g_door_event = 1u;
-}
+ ISR(INT1_vect)
+ {
+     /* Mask INT1 immediately (one-shot) */
+        EIMSK &= (uint8_t)~(1u << INT1);
+
+        /* Latch event */
+        g_door_event = 1u;
+ }
+
+
+// static void rtc_wake_init_pd2(void)
+// {
+//     /* PD2 input */
+//     DDRD  &= (uint8_t)~(1u << PD2);
+
+//     /* External pull-up exists. Leave internal OFF. */
+//     PORTD &= (uint8_t)~(1u << PD2);
+
+//     /* LOW-level trigger required for PWR_DOWN wake */
+//     EICRA &= (uint8_t)~((1u << ISC01) | (1u << ISC00));
+
+//     /* Clear any stale flag */
+//     EIFR  |= (uint8_t)(1u << INTF0);
+
+//     /* Enable INT0 */
+//     EIMSK |= (uint8_t)(1u << INT0);
+// }
 
 /* ============================================================================
  * TIME HELPERS
@@ -120,87 +112,31 @@ static inline uint16_t strictly_future_minute(uint16_t now_min,
     return target_min;
 }
 
-/* ============================================================================
- * RESET CAUSE
- * ========================================================================== */
+
 
 static uint8_t g_reset_flags;
 
 static void reset_cause_capture_early(void)
 {
     g_reset_flags = MCUSR;
-    MCUSR = 0;
-    wdt_disable();
+    MCUSR = 0;          /* clear flags immediately */
+    wdt_disable();      /* if WDT ever enabled, keep boot deterministic */
 
     /* Disable JTAG immediately (double write required) */
     MCUCR |= _BV(JTD);
     MCUCR |= _BV(JTD);
+
 }
 
 static void reset_cause_debug_print(void)
 {
-    if (g_reset_flags & _BV(PORF)) mini_printf("RESET: Power On\n");
-    if (g_reset_flags & _BV(BORF)) mini_printf("RESET: Brown-Out\n");
-    if (g_reset_flags & _BV(WDRF)) mini_printf("RESET: Watchdog\n");
-}
+    /* Optional, but useful while you are validating BOD behavior */
+     if (g_reset_flags & _BV(PORF))  mini_printf("RESET: Power On\n");
+//    if (g_reset_flags & _BV(EXTRF)) mini_printf(" EXT");
+    if (g_reset_flags & _BV(BORF))  mini_printf("RESET: Brown-Out\n");
+    if (g_reset_flags & _BV(WDRF))  mini_printf("RESET: Watchdog\n");
+ }
 
-/* ============================================================================
- * INT re-arm helpers
- * ========================================================================== */
-
-/*
- * Re-arm INT0 after we have released the RTC INT line
- * (i.e., after clearing AF).
- */
-static inline void rearm_int0_rtc(void)
-{
-    EIFR  |= (uint8_t)(1u << INTF0);
-    EIMSK |= (uint8_t)(1u << INT0);
-}
-
-/*
- * Re-arm INT1 only when the door switch is released (line HIGH).
- * This prevents immediate re-entry on a held-low switch.
- */
-static inline void rearm_int1_door_if_released(void)
-{
-    EIFR |= (uint8_t)(1u << INTF1);
-
-    if (!gpio_door_sw_is_asserted()) {
-        EIMSK |= (uint8_t)(1u << INT1);
-    }
-}
-
-/* ============================================================================
- * Manual door event consumption
- * ========================================================================== */
-
-/*
- * Consume door event latch.
- *
- * Rules:
- * - Only act if the switch is actually still asserted after a short debounce.
- * - door_sm_toggle() is the only thing allowed to "do door motion" from here.
- */
-static bool handle_manual_door_event(void)
-{
-    if (!g_door_event)
-        return false;
-
-    g_door_event = 0u;
-
-    /* Debounce: confirm still low */
-    _delay_ms(20);
-
-    if (!gpio_door_sw_is_asserted())
-        return false;
-
-    /* Optional: useful during bring-up */
-    /* mini_printf("DOOR SW\n"); */
-
-    door_sm_toggle();
-    return true;
-}
 
 /* ============================================================================
  * MAIN
@@ -210,34 +146,25 @@ int main(void)
 {
     reset_cause_capture_early();
 
-    /* If brown-out reset, allow rails + peripherals to settle */
-    if (g_reset_flags & _BV(BORF)) {
-        _delay_ms(50);
-    }
+     /* If brown-out reset, allow rails + peripherals to settle */
+     if (g_reset_flags & _BV(BORF)) {
+         _delay_ms(50);
+     }
+
 
     uart_init();
 
     if (!i2c_init(100000)) {
         mini_printf("I2C init failed\n");
-        while (1) { }
+        while (1);
     }
 
     uptime_init();
     rtc_init();
 
-    /*
-     * CRITICAL:
-     * All actuator pins are driven to safe OFF state here.
-     * Nothing should energize before this call.
-     */
     coop_gpio_init();
 
-    /*
-     * Sleep subsystem config:
-     * - configures PD2/PD3 inputs
-     * - configures INT0/INT1 sense control (per current system_sleep_avr.cpp)
-     * - enables INT0/INT1 in EIMSK
-     */
+    /* INT0 wake path (PD2) */
     system_sleep_init();
 
     sei();
@@ -248,28 +175,74 @@ int main(void)
     (void)config_load(&g_cfg);
 
     /* ----------------------------------------------------------
-     * Decide config mode ONCE (strap-at-boot behavior)
+     * CONFIG MODE
      * ---------------------------------------------------------- */
-    bool config_mode = config_sw_state();
 
-    if (config_mode) {
+    static bool config_consumed = false;
+
+    if (config_sw_state() && !config_consumed) {
+
+        config_consumed = true;
+
         console_init();
-        reset_cause_debug_print();
+
+        reset_cause_debug_print();   /* <-- add this here */
 
         if (!rtc_time_is_set())
             led_state_machine_set(LED_BLINK, LED_RED);
+
+        while (!console_should_exit()) {
+            console_poll();
+            device_tick(uptime_millis());
+
+
+            ///-----------
+            /* Re-arm INT1 only when door switch is released */
+            EIFR |= (uint8_t)(1u << INTF1);
+            if (!gpio_door_sw_is_asserted()) {
+                EIMSK |= (uint8_t)(1u << INT1);
+            }
+
+            /* ------------------------------------------------------
+             * Manual Door Switch Event
+             * ------------------------------------------------------ */
+            if (g_door_event) {
+
+                g_door_event = 0u;
+
+                /* Confirm switch still asserted (debounce) */
+                _delay_ms(20);
+
+
+                if (gpio_door_sw_is_asserted()) {
+                   door_sm_toggle();
+                }
+            }
+
+
+        }
     }
 
+
     /* ----------------------------------------------------------
-     * Healthy boot pulse (only if we are not screaming about RTC)
+     * RUN MODE requires valid RTC
      * ---------------------------------------------------------- */
-    if (rtc_time_is_set()) {
-        led_state_machine_set(LED_ON, LED_GREEN);
+    if (!rtc_time_is_set()) {
+        led_state_machine_set(LED_BLINK, LED_RED);
+        for (;;) {
+            device_tick(uptime_millis());
+        }
+    }
+
+    /* Healthy boot pulse */
+    led_state_machine_set(LED_ON, LED_GREEN);
+
+    {
         uint32_t t0 = uptime_millis();
         while ((uint32_t)(uptime_millis() - t0) < 1000u)
             device_tick(uptime_millis());
-        led_state_machine_set(LED_OFF, LED_GREEN);
     }
+    led_state_machine_set(LED_OFF, LED_GREEN);
 
     /* ----------------------------------------------------------
      * Scheduler state
@@ -285,76 +258,43 @@ int main(void)
     bool have_sol = false;
 
     /* ----------------------------------------------------------
-     * MAIN LOOP (single engine)
+     * MAIN LOOP
      * ---------------------------------------------------------- */
     for (;;) {
 
-        uint32_t now_ms = uptime_millis();
-
-        /*
-         * Always service devices while awake.
-         * This advances LED PWM/state machines, door timing, relay pulses, etc.
-         */
-        device_tick(now_ms);
-
-        /*
-         * Always release the RTC INT line early in the loop.
-         * If AF is set, INT/CLKOUT can be held low and INT0 will retrigger.
-         */
+    /* Always clear AF first.
+           This releases INT line high again. */
         rtc_alarm_clear_flag();
 
-        /*
-         * Re-arm interrupts each iteration:
-         * - INT0: always (after AF clear)
-         * - INT1: only if switch released
-         */
-        rearm_int0_rtc();
-        rearm_int1_door_if_released();
+        /* Re-arm INT0 after AF cleared */
+        EIFR  |= (uint8_t)(1u << INTF0);
+        EIMSK |= (uint8_t)(1u << INT0);
 
-        /*
-         * Manual door event is allowed in BOTH modes:
-         * - config mode: you can still exercise the door
-         * - run mode: normal operation
-         */
-        (void)handle_manual_door_event();
-
-        /* ------------------------------------------------------
-         * CONFIG MODE LOOP BODY
-         * ------------------------------------------------------ */
-        if (config_mode) {
-
-            console_poll();
-
-            // /*
-            //  * Exit config mode when console says so.
-            //  * After exit, we continue in the same engine loop.
-            //  */
-            // if (console_should_exit()) {
-            //     config_mode = false;
-
-            //     /*
-            //      * If RTC still invalid after config, indicate it.
-            //      * System continues to run device_tick (so LED patterns still work),
-            //      * but schedule/sleep will not run until RTC is valid.
-            //      */
-            //     if (!rtc_time_is_set())
-            //         led_state_machine_set(LED_BLINK, LED_RED);
-            // }
-
-       //     continue;
+        /* Re-arm INT1 only when door switch is released */
+        EIFR |= (uint8_t)(1u << INTF1);
+        if (!gpio_door_sw_is_asserted()) {
+            EIMSK |= (uint8_t)(1u << INT1);
         }
 
         /* ------------------------------------------------------
-         * RUN MODE precondition: RTC must be valid
+         * Manual Door Switch Event
          * ------------------------------------------------------ */
-        if (!rtc_time_is_set()) {
-            led_state_machine_set(LED_BLINK, LED_RED);
-            continue; /* stay awake, keep device_tick running */
+        if (g_door_event) {
+
+            g_door_event = 0u;
+
+            /* Confirm switch still asserted (debounce) */
+            _delay_ms(20);
+
+
+            if (gpio_door_sw_is_asserted()) {
+                mini_printf("DOOR SW\n");
+                door_sm_toggle();
+            }
         }
 
-        /* ------------------------------------------------------
-         * Time Read
-         * ------------------------------------------------------ */
+
+        /* Read time */
         int y, mo, d, h, m, s;
         rtc_get_time(&y, &mo, &d, &h, &m, &s);
 
@@ -381,12 +321,6 @@ int main(void)
 
             system_sleep_until(wake_min);
 
-            /*
-             * After wake, loop continues:
-             * - device_tick runs
-             * - AF cleared
-             * - interrupts rearmed
-             */
             continue;
         }
 
@@ -453,7 +387,7 @@ int main(void)
         }
 
         /* ------------------------------------------------------
-         * Program next wake (end of awake work)
+         * Program next wake
          * ------------------------------------------------------ */
         {
             uint16_t next_min;

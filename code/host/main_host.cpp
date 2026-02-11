@@ -62,7 +62,7 @@ int main(void)
     /* ----------------------------------------------------------
      * Main loop
      * ---------------------------------------------------------- */
-    while (!console_should_exit()) {
+     for(;;) {
 
         /* Service console input */
         console_poll();

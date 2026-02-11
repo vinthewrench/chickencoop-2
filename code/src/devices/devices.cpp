@@ -251,3 +251,28 @@ bool device_parse_state_by_id(uint8_t id,
 
     return false;
 }
+
+
+/*
+ * devices_busy()
+ *
+ * Returns true if any device state machine is currently active
+ * and requires CPU time.
+ *
+
+ * Returns:
+ *   true  → System must remain awake
+ *   false → Safe to enter sleep
+ */
+bool devices_busy(void){
+
+    for (size_t i = 0; i < DEVICE_ID_TABLE_SIZE; i++) {
+        const Device *dev = devices[i];
+        if (!dev)
+            continue;
+
+        if (dev->is_busy)
+            if(dev->is_busy()) return true;
+    }
+    return false;
+}

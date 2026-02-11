@@ -34,9 +34,6 @@ extern bool want_exit;
 void console_init(void);
 void console_poll(void);
 
-// Query whether exit was requested (used by main loop)
-bool console_should_exit(void);
-
 // Timeout control - useful during long operations / wizards
 void console_suspend_timeout(void);
 void console_resume_timeout(void);

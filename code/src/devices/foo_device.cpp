@@ -53,6 +53,7 @@ static void foo_device_init(void)
 }
 
 
+
 Device foo_device = {
     .name = "foo",
     .deviceID     = DEVICE_ID_FOO,
@@ -60,6 +61,6 @@ Device foo_device = {
     .get_state = foo_get_state,
     .set_state = foo_set_state,
     .state_string = foo_state_string,
-    .tick = NULL
-
+    .tick = NULL,
+    .is_busy  = NULL
 };
