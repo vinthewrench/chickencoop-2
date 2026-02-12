@@ -23,6 +23,10 @@
  * Updated: January 2026
  */
 
+
+
+ #include <avr/pgmspace.h>
+
 #include "console.h"
 #include "console_io.h"
 #include "console/mini_printf.h"
@@ -66,39 +70,32 @@ static void strip_comment(char *line);
  */
 void console_init(void)
 {
-    static bool first = true;
 
-    if (first) {
-        first = false;
+    console_terminal_init();
 
-        console_terminal_init();
+        console_puts("Chicken Coop Controller ");
+        console_puts(PROJECT_VERSION);
+        console_puts("\n");
 
-         console_puts("Chicken Coop Controller ");
-         console_puts(PROJECT_VERSION);
-         console_puts("\n");
-
-     //   mini_printf("\n\nChicken Coop Controller %s\n", PROJECT_VERSION);
-
-        // Load configuration
-        bool cfg_ok = config_load(&g_cfg);
-        if (!cfg_ok) {
-            console_puts_str(CONSOLE_STR("WARNING: CONFIG INVALID, USING DEFAULTS\n"));
-        }
-
-        // Show current time status
-        if (rtc_time_is_set()) {
-            int y, mo, d, h, m, s;
-            rtc_get_time(&y, &mo, &d, &h, &m, &s);
-            console_puts_str(CONSOLE_STR("TIME: "));
-            print_datetime_ampm(y, mo, d, h, m, s);
-        } else {
-            console_puts_str(CONSOLE_STR("TIME: NOT SET\n"));
-            console_puts_str(CONSOLE_STR("Use: set date YYYY-MM-DD\n"));
-            console_puts_str(CONSOLE_STR("     set time HH:MM:SS AM|PM\n"));
-        }
-
-        console_putc('\n');
+    // Load configuration
+    bool cfg_ok = config_load(&g_cfg);
+    if (!cfg_ok) {
+        console_puts_str(CONSOLE_STR("WARNING: CONFIG INVALID, USING DEFAULTS\n"));
     }
+
+    // Show current time status
+    if (rtc_time_is_set()) {
+        int y, mo, d, h, m, s;
+        rtc_get_time(&y, &mo, &d, &h, &m, &s);
+        console_puts_str(CONSOLE_STR("TIME: "));
+        print_datetime_ampm(y, mo, d, h, m, s);
+    } else {
+        console_puts_str(CONSOLE_STR("TIME: NOT SET\n"));
+        console_puts_str(CONSOLE_STR("Use: set date YYYY-MM-DD\n"));
+        console_puts_str(CONSOLE_STR("     set time HH:MM:SS AM|PM\n"));
+    }
+
+    console_putc('\n');
 
     // Reset input state
     idx = 0;
@@ -262,10 +259,6 @@ static void strip_comment(char *line)
 }
 
 
-
-#ifdef __AVR__
-#include <avr/pgmspace.h>
-
 void console_puts_P(const char *s)
 {
     if (!s) return;
@@ -273,6 +266,3 @@ void console_puts_P(const char *s)
     while ((c = pgm_read_byte(s++)) != '\0')
         console_putc(c);
 }
-
-
-#endif

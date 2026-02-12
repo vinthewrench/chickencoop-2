@@ -139,6 +139,7 @@ void led_state_machine_init(void)
     door_led_off();
 }
 
+
 /**
  * @brief Set LED mode with optional finite cycle count.
  *
@@ -146,25 +147,49 @@ void led_state_machine_init(void)
  * @param color  LED color
  * @param count  Number of cycles (0 = infinite)
  */
-void led_state_machine_set(led_mode_t mode,
-                           led_color_t color,
-                           uint16_t count)
-{
-    g_mode             = mode;
-    g_color            = color;
-    g_cycles_remaining = count;
-    g_cycle_counter    = 0;
+ void led_state_machine_set(led_mode_t mode,
+                            led_color_t color,
+                            uint16_t count)
+ {
+     g_mode             = mode;
+     g_color            = color;
+     g_cycles_remaining = count;
+     g_cycle_counter    = 0;
 
-    g_blink_t0_ms      = 0;
-    g_led_on           = false;
+     g_blink_t0_ms      = 0;
+     g_led_on           = false;
 
-    g_pulse_last_ticks = 0;
-    g_pulse_step       = 0;
-    g_pulse_err        = 0;
+     g_pulse_last_ticks = 0;
+     g_pulse_step       = 0;
+     g_pulse_err        = 0;
 
-    if (mode == LED_OFF)
-        door_led_off();
-}
+     if (mode == LED_OFF) {
+         door_led_off();
+         return;
+     }
+
+     if (mode == LED_ON) {
+         g_led_on = true;
+         led_apply(true, 255);
+         return;
+     }
+
+     if (mode == LED_PULSE) {
+
+         /* Immediately light at full brightness */
+         g_led_on = true;
+         led_apply(true, 255);
+
+         /* Start pulse from peak so it decays immediately */
+         if (color == LED_GREEN)
+             g_pulse_step = PULSE_STEPS_GREEN - 1;
+         else
+             g_pulse_step = PULSE_STEPS_RED - 1;
+
+         g_pulse_last_ticks = g_pwm_ticks;
+         g_pulse_err = 0;
+     }
+ }
 
 /**
  * @brief Backward-compatible overload (infinite cycles).

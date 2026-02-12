@@ -168,3 +168,6 @@ void device_tick(uint32_t now_ms);
  *   false → Safe to enter sleep
  */
 bool devices_busy(void);
+
+
+bool device_is_busy(uint8_t id);

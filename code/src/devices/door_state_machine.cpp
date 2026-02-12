@@ -116,7 +116,7 @@ void door_sm_request(dev_state_t state)
 
     if (state == DEV_STATE_ON) {
         /* OPEN */
-        door_hw_set_open_dir();
+         door_hw_set_open_dir();
         door_hw_enable();
         set_motion(DOOR_MOVING_OPEN);
     } else {
@@ -194,11 +194,32 @@ void door_sm_tick(uint32_t now_ms)
         break;
     }
 }
-
 dev_state_t door_sm_get_state(void)
 {
-    return g_settled_state;
+    switch (g_motion) {
+
+    /* Settled states */
+    case DOOR_IDLE_OPEN:
+        return DEV_STATE_ON;
+
+    case DOOR_IDLE_CLOSED:
+        return DEV_STATE_OFF;
+
+    /* Transitional states — report intent */
+    case DOOR_MOVING_OPEN:
+        return DEV_STATE_ON;
+
+    case DOOR_MOVING_CLOSE:
+    case DOOR_POSTCLOSE_LOCK:
+        return DEV_STATE_OFF;
+
+    /* True unknown (boot) */
+    case DOOR_IDLE_UNKNOWN:
+    default:
+        return DEV_STATE_UNKNOWN;
+    }
 }
+
 
 door_motion_t door_sm_get_motion(void)
 {

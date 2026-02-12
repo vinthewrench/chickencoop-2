@@ -65,5 +65,10 @@ int  console_getc(void);                // -1 if no character available
 // Terminal setup (baud rate, line endings, etc.)
 void console_terminal_init(void);
 
+
+void console_terminal_shutdown(void);
+
+void console_flush(void);
+
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)

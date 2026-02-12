@@ -70,6 +70,7 @@ static const Device *device_by_id(uint8_t id)
     return devices[id];
 }
 
+
 /* --------------------------------------------------------------------------
  * Enumeration
  * -------------------------------------------------------------------------- */
@@ -275,4 +276,15 @@ bool devices_busy(void){
             if(dev->is_busy()) return true;
     }
     return false;
+}
+
+
+
+bool device_is_busy(uint8_t id)
+{
+    const Device *dev = device_by_id(id);
+    if (!dev || !dev->is_busy)
+        return false;
+
+    return dev->is_busy;
 }

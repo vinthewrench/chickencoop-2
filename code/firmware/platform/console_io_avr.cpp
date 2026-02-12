@@ -35,3 +35,12 @@ void console_puts(const char *s)
 void console_terminal_init(void){
     uart_init();
 }
+
+void console_terminal_shutdown(void)
+{
+    uart_shutdown();
+}
+
+void console_flush(void){
+    uart_flush_tx();
+}

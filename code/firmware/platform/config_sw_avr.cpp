@@ -39,33 +39,15 @@
  *   PC6 HIGH -> CONFIG MODE
  *   PC6 LOW  -> normal mode
  */
-static bool read_hw_state_once(void)
-{
-    /* Force PC6 into a known-good input state */
-    DDRC  &= (uint8_t)~_BV(CONFIG_SW_BIT);   // input
-    PORTC |=  _BV(CONFIG_SW_BIT);            // enable pull-up (safety net)
+ bool config_sw_state(void)
+ {
+     /* Ensure PC6 is input with pull-up enabled */
+     DDRC  &= (uint8_t)~_BV(CONFIG_SW_BIT);
+     PORTC |=  _BV(CONFIG_SW_BIT);
 
-    /* Allow pin + RC + pull-up to settle after reset */
-    for (volatile uint8_t i = 0; i < 50; i++) {
-        __asm__ __volatile__("nop");
-    }
-
-    /* Active-HIGH: HIGH means CONFIG enabled */
-    return (PINC & _BV(CONFIG_SW_BIT)) != 0;
-}
-
-/*
- * Public API
- *
- * CONFIG switch state is sampled once per boot and cached.
- */
-bool config_sw_state(void)
-{
-    static int8_t cached = -1;
-
-    if (cached < 0) {
-        cached = read_hw_state_once() ? 1 : 0;
-    }
-
-    return cached != 0;
-}
+     /* ACTIVE-HIGH:
+        HIGH = CONFIG
+        LOW  = RUN
+     */
+     return (PINC & _BV(CONFIG_SW_BIT)) != 0;
+ }

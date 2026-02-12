@@ -33,6 +33,21 @@ void uart_init(void)
     UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
 }
 
+void uart_shutdown(void)
+{
+    /* Disable RX, TX, and RX interrupt if enabled */
+    UCSR0B &= ~((1 << RXEN0) |
+                (1 << TXEN0) |
+                (1 << RXCIE0) |
+                (1 << TXCIE0) |
+                (1 << UDRIE0));
+
+    /* Optional: clear pending RX flag */
+    (void)UDR0;
+
+    /* Leave frame format as-is. No need to touch UCSR0C. */
+}
+
 int uart_getc(void)
 {
     if (!(UCSR0A & (1 << RXC0)))
@@ -53,4 +68,15 @@ void uart_putc(char c)
         ;
 
     UDR0 = c;
+}
+
+void uart_flush_tx(void)
+{
+    /* Wait for transmit complete flag */
+    while (!(UCSR0A & (1 << TXC0))) {
+        ;
+    }
+
+    /* Clear TXC0 by writing 1 */
+    UCSR0A |= (1 << TXC0);
 }

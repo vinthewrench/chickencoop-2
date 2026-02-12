@@ -203,7 +203,7 @@ static void rtc_clear_os_if_running(void)
 
      uint8_t verify;
      if (i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &verify, 1)) {
-         mini_printf("CTRL1 after init: 0x%02x\n", verify);
+         mini_printf("\tDEBUG CTRL1 after init: 0x%02x\n", verify);
      }
 
      /*
@@ -257,7 +257,7 @@ void rtc_get_time(int *y, int *mo, int *d,
     if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf)))
         return;
 
-    mini_printf("RTC buffer: %02x %02x %02x %02x:\n", buf[0],  buf[1],  buf[2],  buf[3] );
+    mini_printf("\tDEBUG RTC buffer: %02x %02x %02x %02x:\n", buf[0],  buf[1],  buf[2],  buf[3] );
 
 
     if (s)  *s  = bcd_to_bin(buf[0] & 0x7F);
@@ -309,7 +309,7 @@ bool rtc_set_time(int y, int mo, int d,
     buf[5] = bin_to_bcd((uint8_t)mo) & 0x1F;
     buf[6] = bin_to_bcd((uint8_t)(y % 100));
 
-    mini_printf("RTC buffer write : %02x %02x %02x %02x:\n",
+    mini_printf("\tDEBUG RTC buffer write : %02x %02x %02x %02x:\n",
                 buf[0], buf[1], buf[2], buf[3]);
 
     if (!i2c_write(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf)))
@@ -383,25 +383,4 @@ void rtc_alarm_clear_flag(void)
         return;
     c2 &= (uint8_t)~CTRL2_AF_BIT;
     (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_2, &c2, 1);
-}
-
-/* ============================================================================
- * DEBUG
- * ========================================================================== */
-
-void rtc_debug_dump(void)
-{
-    uint8_t c1, c2;
-
-    if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1) ||
-        !i2c_read(PCF8523_ADDR7, REG_CONTROL_2, &c2, 1)) {
-        mini_printf("RTC: read failed\n");
-        return;
-    }
-
-    mini_printf("RTC CTRL1=0x%02x CTRL2=0x%02x AIE=%u AF=%u\n",
-                c1,
-                c2,
-                (c1 & CTRL1_AIE_BIT) ? 1u : 0u,
-                (c2 & CTRL2_AF_BIT) ? 1u : 0u);
 }
