@@ -170,42 +170,60 @@ static void rtc_clear_os_if_running(void)
  * INITIALIZATION
  * ========================================================================== */
 
-void rtc_init(void)
-{
-    uint8_t c1;
+ void rtc_init(void)
+ {
+     uint8_t c1;
 
-    if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
-        return;
+     if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
+         return;
 
-    /* Configure crystal load */
-    c1 &= (uint8_t)~CTRL1_CL_MASK;
-    c1 |= CTRL1_CL_12P5PF;
+     /*
+      * Configure crystal load.
+      * AB26T requires 12.5 pF.
+      */
+     c1 &= (uint8_t)~CTRL1_CL_MASK;
+     c1 |= CTRL1_CL_12P5PF;
 
-    /* Ensure oscillator running */
-    c1 &= (uint8_t)~CTRL1_STOP_BIT;
+     /*
+      * Ensure oscillator running.
+      */
+     c1 &= (uint8_t)~CTRL1_STOP_BIT;
 
-    (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1);
+     /*
+      * FORCE 24-HOUR MODE.
+      *
+      * CRITICAL:
+      *  - 12/24 selection is Control_1 bit 3 (12_24), NOT a bit in the Hours register.
+      *  - DO NOT touch Hours bit 5 here. In 24h mode, Hours bits 5..4 are the BCD tens digit.
+      */
+     c1 &= (uint8_t)~(1u << 3); /* 12_24 = 0 => 24 hour mode */
 
-    /* Disable CLKOUT */
-    uint8_t clk;
-    if (i2c_read(PCF8523_ADDR7, REG_TMR_CLKOUT, &clk, 1)) {
-        clk &= (uint8_t)~CLKOUT_COF_MASK;
-        clk |= CLKOUT_DISABLE;
-        (void)i2c_write(PCF8523_ADDR7, REG_TMR_CLKOUT, &clk, 1);
-    }
+     (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1);
 
-    /* Force 24-hour mode */
-    {
-        uint8_t hour;
-        if (i2c_read(PCF8523_ADDR7, REG_HOURS, &hour, 1)) {
-            hour &= (uint8_t)~(1u << 5);
-            (void)i2c_write(PCF8523_ADDR7, REG_HOURS, &hour, 1);
-        }
-    }
 
-    rtc_alarm_clear_flag();
-    rtc_clear_os_if_running();
-}
+     uint8_t verify;
+     if (i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &verify, 1)) {
+         mini_printf("CTRL1 after init: 0x%02x\n", verify);
+     }
+
+     /*
+      * Disable CLKOUT (pin 7) so INT can work.
+      */
+     {
+         uint8_t clk;
+         if (i2c_read(PCF8523_ADDR7, REG_TMR_CLKOUT, &clk, 1)) {
+             clk &= (uint8_t)~CLKOUT_COF_MASK;
+             clk |= CLKOUT_DISABLE;
+             (void)i2c_write(PCF8523_ADDR7, REG_TMR_CLKOUT, &clk, 1);
+         }
+     }
+
+     /*
+      * Clear alarm flag and validate oscillator-stop flag.
+      */
+     rtc_alarm_clear_flag();
+     rtc_clear_os_if_running();
+ }
 
 /* ============================================================================
  * STATUS
@@ -239,6 +257,9 @@ void rtc_get_time(int *y, int *mo, int *d,
     if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf)))
         return;
 
+    mini_printf("RTC buffer: %02x %02x %02x %02x:\n", buf[0],  buf[1],  buf[2],  buf[3] );
+
+
     if (s)  *s  = bcd_to_bin(buf[0] & 0x7F);
     if (m)  *m  = bcd_to_bin(buf[1] & 0x7F);
 
@@ -250,6 +271,8 @@ void rtc_get_time(int *y, int *mo, int *d,
     if (d)  *d  = bcd_to_bin(buf[3] & 0x3F);
     if (mo) *mo = bcd_to_bin(buf[5] & 0x1F);
     if (y)  *y  = 2000 + bcd_to_bin(buf[6]);
+
+
 }
 
 bool rtc_set_time(int y, int mo, int d,
@@ -261,29 +284,47 @@ bool rtc_set_time(int y, int mo, int d,
     if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
         return false;
 
-    /* Stop oscillator */
+    /*
+     * Stop oscillator for atomic update.
+     */
     c1 |= CTRL1_STOP_BIT;
+
+    /*
+     * FORCE 24-HOUR MODE HERE TOO.
+     *
+     * 12/24 selection is Control_1 bit 3 (12_24).
+     * If we leave the chip in 12-hour mode, the Hours register bit 5 becomes AM/PM,
+     * and writing BCD hours with &0x3F will be interpreted wrong.
+     */
+    c1 &= (uint8_t)~(1u << 3); /* 12_24 = 0 => 24 hour mode */
+
     if (!i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
         return false;
 
-    buf[0] = bin_to_bcd((uint8_t)s) & 0x7F;
-    buf[1] = bin_to_bcd((uint8_t)m) & 0x7F;
-    buf[2] = bin_to_bcd((uint8_t)h) & 0x3F;   /* force 24-hour */
-    buf[3] = bin_to_bcd((uint8_t)d) & 0x3F;
+    buf[0] = bin_to_bcd((uint8_t)s)  & 0x7F;
+    buf[1] = bin_to_bcd((uint8_t)m)  & 0x7F;
+    buf[2] = bin_to_bcd((uint8_t)h)  & 0x3F;   /* hours 00-23 in BCD */
+    buf[3] = bin_to_bcd((uint8_t)d)  & 0x3F;
     buf[4] = 0;
     buf[5] = bin_to_bcd((uint8_t)mo) & 0x1F;
     buf[6] = bin_to_bcd((uint8_t)(y % 100));
 
+    mini_printf("RTC buffer write : %02x %02x %02x %02x:\n",
+                buf[0], buf[1], buf[2], buf[3]);
+
     if (!i2c_write(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf)))
         return false;
 
-    /* Restart oscillator */
+    /*
+     * Restart oscillator.
+     */
     c1 &= (uint8_t)~CTRL1_STOP_BIT;
     if (!i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
         return false;
 
     return true;
 }
+
 
 /* ============================================================================
  * ALARM
