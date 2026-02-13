@@ -1,0 +1,23 @@
+CompileFlags:
+    Add:
+        - -std=gnu++17
+        - -DF_CPU=8000000UL
+        - -DPROJECT_VERSION="\"2.8.0\""
+        - -mmcu=atmega1284p
+        - -Isrc
+        - -Iplatform
+        - -Wall
+        - -Wextra
+
+    Remove:
+        - -fno-exceptions
+        - -fno-rtti
+
+Diagnostics:
+    UnusedIncludes: Strict
+
+Index:
+    Background: Build
+
+InlayHints:
+    Enabled: Yes

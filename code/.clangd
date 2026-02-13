@@ -1,6 +1,0 @@
-CompileFlags:
-  Add:
-    - -Icode/src
-    - -Icode/host
-    - -Icode/firmware
-    - -DHOST_BUILD
