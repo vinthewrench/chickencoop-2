@@ -21,7 +21,7 @@ extern const Device door_device;
 extern const Device led_device;
 extern const Device relay1_device;
 extern const Device relay2_device;
-extern const Device foo_device;
+//extern const Device foo_device;
 
 /* --------------------------------------------------------------------------
  * Registry table (sparse, explicit IDs)
@@ -45,7 +45,7 @@ void device_init(void)
     devices[DEVICE_ID_LED]    = &led_device;
     devices[DEVICE_ID_RELAY1] = &relay1_device;
     devices[DEVICE_ID_RELAY2] = &relay2_device;
-    devices[DEVICE_ID_FOO]    = &foo_device;
+  //  devices[DEVICE_ID_FOO]    = &foo_device;
 
     /* Initialize registered devices only */
     for (size_t i = 0; i < DEVICE_ID_TABLE_SIZE; i++) {

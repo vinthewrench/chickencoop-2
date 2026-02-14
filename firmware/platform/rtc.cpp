@@ -124,6 +124,7 @@ static uint8_t bin_to_bcd(uint8_t v)
     return (uint8_t)(((v / 10u) << 4) | (v % 10u));
 }
 
+
 /* ============================================================================
  * OSCILLATOR VALIDATION
  * ========================================================================== */
@@ -200,11 +201,10 @@ static void rtc_clear_os_if_running(void)
 
      (void)i2c_write(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1);
 
-
-     uint8_t verify;
-     if (i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &verify, 1)) {
-         mini_printf("\tDEBUG CTRL1 after init: 0x%02x\n", verify);
-     }
+     // uint8_t verify;
+     // if (i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &verify, 1)) {
+     //     mini_printf("\tDEBUG RTC CTRL1 after init: 0x%02x\n", verify);
+     // }
 
      /*
       * Disable CLKOUT (pin 7) so INT can work.
@@ -237,6 +237,7 @@ bool rtc_oscillator_running(void)
     return (c1 & CTRL1_STOP_BIT) == 0u;
 }
 
+
 bool rtc_time_is_set(void)
 {
     uint8_t sec;
@@ -244,6 +245,39 @@ bool rtc_time_is_set(void)
         return false;
     return (sec & 0x80u) == 0u;
 }
+
+
+bool rtc_validate_at_boot(void)
+{
+    uint8_t c1;
+    if (!i2c_read(PCF8523_ADDR7, REG_CONTROL_1, &c1, 1))
+        return false;
+
+    /* Oscillator must not be stopped */
+    if (c1 & CTRL1_STOP_BIT)
+        return false;
+
+    uint8_t sec1;
+    if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, &sec1, 1))
+        return false;
+
+    /* OS flag must be clear */
+    if (sec1 & 0x80u)
+        return false;
+
+    /* Prove it is ticking */
+    _delay_ms(1100);
+
+    uint8_t sec2;
+    if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, &sec2, 1))
+        return false;
+
+    if ((sec2 & 0x7F) == (sec1 & 0x7F))
+        return false;   /* not advancing */
+
+    return true;
+}
+
 
 /* ============================================================================
  * TIME ACCESS
@@ -257,8 +291,9 @@ void rtc_get_time(int *y, int *mo, int *d,
     if (!i2c_read(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf)))
         return;
 
+#ifdef DEBUG_RTC
     mini_printf("\tDEBUG RTC buffer: %02x %02x %02x %02x:\n", buf[0],  buf[1],  buf[2],  buf[3] );
-
+#endif
 
     if (s)  *s  = bcd_to_bin(buf[0] & 0x7F);
     if (m)  *m  = bcd_to_bin(buf[1] & 0x7F);
@@ -309,8 +344,10 @@ bool rtc_set_time(int y, int mo, int d,
     buf[5] = bin_to_bcd((uint8_t)mo) & 0x1F;
     buf[6] = bin_to_bcd((uint8_t)(y % 100));
 
-    mini_printf("\tDEBUG RTC buffer write : %02x %02x %02x %02x:\n",
+    #ifdef DEBUG_RTC
+        mini_printf("\tDEBUG RTC buffer write : %02x %02x %02x %02x:\n",
                 buf[0], buf[1], buf[2], buf[3]);
+    #endif
 
     if (!i2c_write(PCF8523_ADDR7, REG_SECONDS, buf, sizeof(buf)))
         return false;

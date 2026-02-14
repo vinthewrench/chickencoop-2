@@ -22,21 +22,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
-
-#ifdef __AVR__
-    #include <avr/pgmspace.h>
-#endif
-
-// Global flag - set to true when user wants to exit config mode
-extern bool want_exit;
+#include <avr/pgmspace.h>
 
 // Core console lifecycle
 void console_init(void);
 void console_poll(void);
-
-// Timeout control - useful during long operations / wizards
-void console_suspend_timeout(void);
-void console_resume_timeout(void);
 
 // -----------------------------------------------------------------------------
 // Cross-platform string helpers for commands/help printing

@@ -7,8 +7,6 @@
  * Features:
  *  - Interactive command-line interface over UART
  *  - Line editing (backspace, Ctrl-U)
- *  - Command timeout (auto-exit after inactivity)
- *  - Comment stripping (#...)
  *  -
  * Cross-platform notes:
  *  - Uses console_xxx_str() helpers from console.h
@@ -41,27 +39,13 @@
 extern void console_dispatch(int argc, char **argv);
 extern struct config g_cfg;
 
-
-// Global exit flag - set by exit command or timeout
-bool want_exit = false;
-
-// Configuration timeout constants
-static const uint32_t CONFIG_TIMEOUT_SEC = 300;     // 5 minutes on real hardware
-
 // Input buffer
 #define MAX_LINE 64
 static char buf[MAX_LINE];
 static int idx = 0;
 
-// Last activity timestamp (seconds since boot)
-static uint32_t last_activity_sec = 0;
-
-// Timeout enable/disable flag
-static bool console_timeout_enabled = false;
-
 // Forward declaration of local helpers
 static void strip_comment(char *line);
-
 
 
 /**
@@ -99,34 +83,9 @@ void console_init(void)
 
     // Reset input state
     idx = 0;
-    last_activity_sec = uptime_seconds();
-    console_puts_str(CONSOLE_STR("> "));
+     console_puts_str(CONSOLE_STR("> "));
 }
 
-/**
- * Suspend automatic timeout (useful during long wizards/commands)
- */
-void console_suspend_timeout(void)
-{
-    console_timeout_enabled = false;
-}
-
-/**
- * Resume normal timeout behavior
- */
-void console_resume_timeout(void)
-{
-    console_timeout_enabled = true;
-    last_activity_sec = uptime_seconds();  // reset timer
-}
-
-/**
- * Check if console wants to exit (timeout or 'exit' command)
- */
-bool console_should_exit(void)
-{
-    return want_exit;
-}
 
 /**
  * Main console polling function
@@ -137,23 +96,10 @@ void console_poll(void)
     static bool esc_active = false;
     static bool esc_csi    = false;
 
-    if (want_exit)
-        return;
-
-    // Check inactivity timeout
-    if (console_timeout_enabled &&
-        (uptime_seconds() - last_activity_sec) >= CONFIG_TIMEOUT_SEC) {
-        console_puts_str(CONSOLE_STR("\n[CONFIG timeout]\n"));
-        want_exit = true;
-        return;
-    }
 
     int c = console_getc();
     if (c < 0)
         return;
-
-    // Any input resets timeout
-    last_activity_sec = uptime_seconds();
 
 
     // ------------------------------------------------------------

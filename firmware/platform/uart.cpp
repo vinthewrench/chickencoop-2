@@ -31,6 +31,13 @@ void uart_init(void)
 
     /* 8 data bits, no parity, 1 stop bit */
     UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+
+    /* --------------------------------------------------
+    * Flush any pending RX garbage
+    * -------------------------------------------------- */
+    while (UCSR0A & (1 << RXC0)) {
+        (void)UDR0;
+       }
 }
 
 void uart_shutdown(void)

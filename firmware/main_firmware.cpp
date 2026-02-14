@@ -117,6 +117,8 @@ static void reset_cause_debug_print(void)
 
  int main(void)
  {
+     bool rtc_valid = false;
+
      reset_cause_capture_early();
 
      if (g_reset_flags & _BV(BORF)) {
@@ -136,6 +138,9 @@ static void reset_cause_debug_print(void)
      }
 
      rtc_init();
+
+    rtc_valid = rtc_validate_at_boot();
+
      system_sleep_init();
      sei();
 
@@ -227,7 +232,11 @@ static void reset_cause_debug_print(void)
           * RTC required
           * ------------------------------------------------------ */
 
-         if (!rtc_time_is_set()) {
+          if(rtc_time_is_set()) {
+              if(!rtc_valid) rtc_valid = true;
+          }
+          else
+         {
              led_state_machine_set(LED_BLINK, LED_RED);
              continue;
          }

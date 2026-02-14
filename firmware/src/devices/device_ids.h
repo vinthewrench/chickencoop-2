@@ -17,7 +17,7 @@ typedef enum {
     DEVICE_ID_LED    = 0x03,
     DEVICE_ID_RELAY1 = 0x04,
     DEVICE_ID_RELAY2 = 0x05,
-    DEVICE_ID_FOO    = 0x06,
+//    DEVICE_ID_FOO    = 0x06,
 
     DEVICE_ID_MAX_PLUS_ONE   /* not a device, marks table size */
 } device_id_t;

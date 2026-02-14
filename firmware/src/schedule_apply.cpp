@@ -39,7 +39,7 @@
          if (have == want)
              continue;
 
-         /* ---- DEBUG: print scheduled action ---- */
+#if 0    /* ---- DEBUG: print scheduled action ---- */
 
          const char *name = "?";
          device_name(id, &name);
@@ -47,6 +47,7 @@
          mini_printf("\tDEBUG SCHED: %s -> %s\n",
                      name,
                      (want == DEV_STATE_ON) ? "ON" : "OFF");
+#endif
 
          /* ---- Apply action ---- */
 

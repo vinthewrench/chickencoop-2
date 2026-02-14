@@ -97,7 +97,6 @@ SRCS := \
 	src/devices/devices.cpp \
 	src/devices/door_device.cpp \
 	src/devices/door_state_machine.cpp \
-	src/devices/foo_device.cpp \
 	src/devices/led_device.cpp \
 	src/devices/led_state_machine.cpp \
 	src/devices/relay_device.cpp \
@@ -119,6 +118,8 @@ SRCS := \
 	platform/uart.cpp \
 	platform/gpio_avr.cpp
 
+#foo_device is sample code to add a new device
+#	src/devices/foo_device.cpp \
 
 # ------------------------------------------------------------
 # Object Files (mirrored under build/)

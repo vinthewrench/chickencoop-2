@@ -108,7 +108,6 @@ static void cmd_solar(int argc, char **argv);
 static void cmd_set(int argc, char **argv);
 static void cmd_config(int argc, char **argv);
 static void cmd_save(int argc, char **argv);
-static void cmd_timeout(int argc, char **argv);
 static void cmd_door(int argc, char **argv);
 static void cmd_lock(int argc, char **argv);
 static void cmd_event(int argc, char **argv);
@@ -425,28 +424,6 @@ static void cmd_solar(int argc, char **argv)
     console_puts("    ");
     print_hhmm(sol.sunset_civ);
     console_putc('\n');
-}
-
-static void cmd_timeout(int argc, char **argv)
-{
-    if (argc != 2) {
-        console_puts("usage: timeout on|off\n");
-        return;
-    }
-
-    if (!strcmp(argv[1], "off")) {
-       console_suspend_timeout();
-       console_puts("TIMEOUT DISABLED\n");
-        return;
-    }
-
-    if (!strcmp(argv[1], "on")) {
-        console_resume_timeout();
-        console_puts("TIMEOUT ENABLED\n");
-        return;
-    }
-
-    console_puts("?\n");
 }
 
 static void cmd_schedule(int argc, char **argv)
@@ -809,6 +786,9 @@ static void cmd_set(int argc, char **argv)
                 dev_state_t st;
                 const char *name;
                 const char *str;
+
+                if(id == DEVICE_ID_LED)
+                    continue;
 
                 if (!device_get_state_by_id(id, &st))
                     continue;
@@ -1524,13 +1504,6 @@ typedef struct {
       "Commit settings", \
       "save\n" \
       "  Commit configuration to EEPROM and program RTC\n" \
-    ) \
-    \
-    X(timeout, 1, 1, cmd_timeout, \
-      "Control CONFIG timeout", \
-      "timeout on\n" \
-      "timeout off\n" \
-      "  Enable or disable CONFIG inactivity timeout\n" \
     ) \
     \
     X(device, 0, 3, cmd_device, \

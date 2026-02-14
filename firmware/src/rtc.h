@@ -59,11 +59,72 @@ void rtc_init(void);
 bool rtc_oscillator_running(void);
 
 /**
- * @brief Returns true if stored time is considered valid.
+ * @brief Lightweight check that RTC time has been set.
  *
- * Reflects hardware OS/VL status.
+ * This function performs a non-blocking check of the OS flag only.
+ * It does NOT verify oscillator motion.
+ *
+ * Safe for use inside the main loop.
+ *
+ * @return true  OS flag clear (time previously set).
+ * @return false OS flag set or I2C failure.
  */
 bool rtc_time_is_set(void);
+
+/**
+ * @brief Perform a blocking RTC integrity validation at system startup.
+ *
+ * ============================================================================
+ * PURPOSE
+ * ============================================================================
+ *
+ * This function performs a full physical validation of the PCF8523 RTC.
+ * It is intended to be called ONCE during system boot.
+ *
+ * This is NOT a lightweight status check.
+ *
+ * ============================================================================
+ * WHAT IT VERIFIES
+ * ============================================================================
+ *
+ * 1. I2C communication is functional.
+ * 2. The STOP bit in CONTROL_1 is clear (oscillator not halted).
+ * 3. The OS (Oscillator Stop) flag in the Seconds register is clear.
+ * 4. The seconds register advances over ~1 second, proving the crystal
+ *    oscillator is physically running.
+ *
+ * ============================================================================
+ * BEHAVIOR
+ * ============================================================================
+ *
+ * - Blocks for approximately 1.1 seconds while verifying seconds rollover.
+ * - Performs multiple I2C reads.
+ * - Does NOT modify time.
+ * - Does NOT clear the OS flag.
+ *
+ * ============================================================================
+ * SYSTEM CONTRACT
+ * ============================================================================
+ *
+ * This function must:
+ *
+ *  - Be called during boot only.
+ *  - NOT be called from the main loop.
+ *  - NOT be used for periodic health checks.
+ *
+ * If this function returns false, the RTC is considered invalid and the
+ * entire system time base must be treated as invalid.
+ *
+ * The system design explicitly states:
+ *
+ *     If the RTC is invalid, the system is invalid.
+ *
+ * ============================================================================
+ *
+ * @return true  RTC oscillator confirmed running and time considered valid.
+ * @return false RTC failed integrity validation.
+ */
+bool rtc_validate_at_boot(void);
 
 /* --------------------------------------------------------------------------
  * Time API (LOCAL civil time)
